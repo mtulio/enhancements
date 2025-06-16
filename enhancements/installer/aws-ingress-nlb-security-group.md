@@ -62,7 +62,7 @@ Using a Network Load Balancer is a recommended network-based Load Balancer by AW
   - c) enhances new configurations to the Ingress Controller when using NLB;
   - d) decreases the amount of images in the core payload;
 
-- As an OpenShift Engineer, I want to make Security Groups managed by CCM by default on OpenShift deployments when creating a Service type-LoadBalancer NLB, providing a mechanism to automatically use Security Groups for the Default router in new deployments, or when it is recreated, ensuring best practices adoption on OpenShift products.
+- As an OpenShift Engineer, I want to make Security Groups managed by CCM to be the default on OpenShift deployments when creating a Service type-LoadBalancer NLB, providing a mechanism to automatically use Security Groups for the Default router in new deployments, or when it is recreated, ensuring best practices adoption on OpenShift products.
 
 [1] TODO: "Security Findings" need to be expanded to collect exact examples. This comes from the customer's comment: https://issues.redhat.com/browse/RFE-5440?focusedId=25761057&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-25761057s
 
