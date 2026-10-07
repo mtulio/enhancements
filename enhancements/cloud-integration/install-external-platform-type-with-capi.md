@@ -2,6 +2,8 @@
 title: install-external-platform-type-with-capi
 authors:
   - "@mtulio"
+  - "@rvanderp3"
+  - "@elmiko"
 reviewers: # Include a comment about what domain expertise a reviewer is expected to bring and what area of the enhancement you expect them to focus on.
   - TBD, "installer, for the Cluster API bootstrap control plane and the asset graph"
   - TBD, "cloud-team, for the platform External contract and the partner support boundary"
@@ -16,10 +18,10 @@ status: provisional
 tracking-link: # link to the tracking ticket that corresponds to this enhancement
   - https://issues.redhat.com/browse/OCPSTRAT-3724
 see-also:
-  - "/enhancements/cloud-integration/infrastructure-external-platform-type.md"
-  - "/enhancements/installer/bootstrapping-clusters-with-capi-providers.md"
-  - "/enhancements/cloud-integration/out-of-tree-provider-support.md"
-  - "/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md"
+  - ["/enhancements/cloud-integration/infrastructure-external-platform-type.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cloud-integration/infrastructure-external-platform-type.md)
+  - ["/enhancements/installer/bootstrapping-clusters-with-capi-providers.md"](https://github.com/openshift/enhancements/blob/master/enhancements/installer/bootstrapping-clusters-with-capi-providers.md)
+  - ["/enhancements/cloud-integration/out-of-tree-provider-support.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cloud-integration/out-of-tree-provider-support.md)
+  - ["/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md)
 replaces: []
 superseded-by: []
 ---
