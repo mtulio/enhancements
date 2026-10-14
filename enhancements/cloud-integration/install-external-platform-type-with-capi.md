@@ -22,6 +22,10 @@ see-also:
   - ["/enhancements/installer/bootstrapping-clusters-with-capi-providers.md"](https://github.com/openshift/enhancements/blob/master/enhancements/installer/bootstrapping-clusters-with-capi-providers.md)
   - ["/enhancements/cloud-integration/out-of-tree-provider-support.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cloud-integration/out-of-tree-provider-support.md)
   - ["/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md)
+  # Day-2 shared DNS/LB contract; candidate replacement for part of this EP's hook surface.
+  - ["infrastructure-driven-cluster-dns-and-load-balancing"](https://github.com/openshift/enhancements/pull/2138)
+  # Earlier, unmerged attempt at DNS/LB on None and External with per-platform fields.
+  - ["Prior art: DNS/LB on None and External"](https://github.com/openshift/enhancements/pull/1666)
 replaces: []
 superseded-by: []
 ---
@@ -211,7 +215,14 @@ Whether this is the right long-term shape — paths on a local filesystem versus
 
 > TODO #1: we must explore the [infrastructure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1) API updates. Similarity the [.status.external.cloudControllerManager.state=External](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1#status-platformstatus-external-cloudcontrollermanager) we must ensure CAPI field as well, something like `.status.external.clusterAPI.state=External`, `None`/unset by default. I think when it is `External` it will require more fields to captuer the external references of the image used to install, as well the Infra CRD such as providerImage
 
-> TODO #2: We must ensure the CAPI objects of local control plane are saved in the cluster, even if it would be read-only, or as a dump of objects in a ConfigMap.
+> TODO #2: We must ensure the CAPI objects of local control plane are saved in the cluster, even if it would be read-only, or as a dump of objects in a ConfigMap/Secret.
+
+
+> TODO #1: the [Infrastructure][infra-api] config API likely needs to record that this path was used. By analogy with `.status.platformStatus.external.cloudControllerManager.state`, something like `.status.platformStatus.external.clusterAPI`, absent by default, carrying the provider name and the artifact references the install resolved — so that a cluster can be identified as externally provisioned without reading `metadata.json`.
+> **On placement.** [#2138][ep-2138] argues — correctly — that configuration repeated beneath each platform discriminator is the duplication mistake already made in the on-prem networking APIs, and places its new DNS and load-balancer fields as siblings of `platformSpec`/`platformStatus`. That reasoning does not extend to this field, and the distinction is worth stating once rather than rediscovering it in API review. DNS and endpoint ownership are a *concern* that every platform has and that no platform should have to re-declare. "Which Cluster API provider provisioned this cluster, and from which artifacts" is *platform identity itself*: it is meaningless on every platform except External, it has no cross-platform analogue to converge on, and it sits beside `cloudControllerManager.state`, which is already scoped this way for the same reason. The test is whether a second platform would ever want the same field;for DNS policy the answer is yes, for external provider provenance it is no.
+
+[infra-api]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1
+
 
 ### Topology Considerations
 
@@ -257,7 +268,9 @@ Constraints discovered by running it, not by design:
   controller fails at validation rather than at exec time.
 * **Artifacts are logged by path, source and SHA-256 — never by content.**
 
-> Note/Open question: a pain point that this EP still not propose are the hooks requirement, crated to cover paths that CAPI does not cover. We must enumerate clearly what are those limitations, so that we could discuss alternatives to let partner implement those interfaces/cover those gaps. Those items will compose the requirements to have an OCP clusters vs vanila K8S, or standard CAPI implementation. Possible solutions: 1) OCP engineers list gaps and provider must implement in the CAPI implementation (such as DNS, additional listeners to KAS LB, etc) [the hard way]; 2) OCP engineers make those hooks more flexible allowing partners to "customize" their IPI deployment using platform external, this would be more flexible for BYO variants.
+> Note/Open question: a pain point that this EP still not propose are the hooks requirement, created to cover paths that CAPI does not cover. We must enumerate clearly what are those limitations, so that we could discuss alternatives to let partner implement those interfaces/cover those gaps. Those items will compose the requirements to have an OCP clusters vs vanila K8S, or standard CAPI implementation. Possible solutions: 1) OCP engineers list gaps and provider must implement in the CAPI implementation (such as DNS, additional listeners to KAS LB, etc) [the hard way]; 2) OCP engineers make those hooks more flexible allowing partners to "customize" their IPI deployment using platform external, this would be more flexible for BYO variants.
+
+> Note: the hooks exist to cover what Cluster API does not. Enumerating those gaps precisely — DNS, additional listeners on the API server load balancer, ingress reachability — is prerequisite work, and the DNS and endpoint subset of it may belong to the shared networking contract rather than to hooks at all. See Open Question 13. Two shapes remain open for whatever is left: Red Hat enumerates the gaps and partners implement them in their provider [the hard way], or the hooks become a flexible customisation surface for BYO variants.
 
 ### Risks and Mitigations
 
@@ -330,10 +343,25 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
 6. **How are failure modes surfaced?** Installer logs only, or do we need a path that explicitly signals the failing component is not Red Hat owned?
 7. **Should partner cloud controller manager and CSI components be required to tag what they create?** Teardown is not supportable without it.
 8. **Should node-to-node 80/443 be a stated `platform: external` networking requirement?** Currently discovered by failure.
-9. **Is the ingress `Service` something `platform: external` should generate, or must every provider hand-author it?** Nothing currently asks the platform for an external address.
+9.  **Who supplies the cluster's ingress and API endpoint addresses on `platform: external`?** Nothing currently asks the platform for an external address: the ingress `Service` is hand-authored per provider, and the API endpoint arrives only as whatever the partner's Cluster API provider happened to configure. There are three plausible answers and they are not equivalent.
+    *(a)* Every provider hand-authors the ingress `Service` and the partner's cloud controller manager reconciles it — the status quo, and the right answer
+    on a cloud-like external platform.
+    *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of    [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently     scoped to `platform: None`.
+    *(c)* The installer derives them from the Cluster     API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
+
 10. **Should an extra manifest directory, from pilot, be allowed to contain multiple documents?** The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
 11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for at least one partner platform no generic, multi-tenant image is published. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
 12. **Automatic CSR approval.** There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
+13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**
+    [openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
+    This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names bbecomes product behaviour rather than a partner script, and the hook surface     narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
+    Three sub-questions, none of which this enhancement can answer alone:
+    * **Address source.** The shared model knows two: discovered node addresses, and administrator-reserved VIPs. A partner Cluster API provider produces a third — a provider-allocated control-plane endpoint, reported on `Cluster.spec.controlPlaneEndpoint`, which is unknown until `Cluster.status.infrastructureReady`. It is neither a node address nor a reserved VIP, and #2138 is explicit that provider-observed endpoints must not be written into administrator intent as though they were VIPs. The mapping from a Cluster API endpoint into `status.networking.endpoints` has no owner today.
+    * **Bootstrap ordering.** #2138 requires that bootstrap not depend on an in-cluster controller that needs the DNS being configured. On this path the endpoint is not known at `create cluster` time, so the installer would have to resolve policy up front and reconcile the address after `infraReady` — the same constraint their None SNO installer path carries, but with a later address.
+    * **Sequencing.** #2138 is provisional, has no External owner, and leaves the acceptance component (CNO or cluster-config-operator) undecided. Nothing in this enhancement's Tech Preview criteria should depend on it. The question to settle before Tech Preview is narrower: whether the hook contract is designed as permanent, or as a bridge that a later shared-networking adoption is expected to replace for the DNS case.
+    Answering this also decides whether the special-purpose hooks sketched earlier — a DNS creator, a load-balancer creator — are worth defining, or whether that work belongs in the shared contract.
+
+[ep-2138]: https://github.com/openshift/enhancements/pull/2138
 
 ## Test Plan
 
