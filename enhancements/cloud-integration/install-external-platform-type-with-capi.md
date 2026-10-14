@@ -43,10 +43,11 @@ outside the installer's control.
 This enhancement lets `openshift-install create cluster` provision
 infrastructure for a `platform: external` cluster by running a Cluster
 API provider **out-of-tree**. The provider's controller binary and
-component manifests are supplied by the user as (?TBD) container images
-or(and?) paths(used in pilot, need to check feasability); the installer's
-existing local, ephemeral Cluster API control plane runs them exactly as
-it runs the providers it embeds. Three optional user-supplied hooks
+component manifests are supplied by the user in one of two mutually
+exclusive forms: a provider-published container image payload, which is
+the intended form, or filesystem paths, which is what the pilot proved.
+The installer's existing local, ephemeral Cluster API control plane runs
+them exactly as it runs the providers it embeds. Three optional user-supplied hooks
 cover the cloud-specific work the installer cannot do, because on
 `platform: external` it holds no cloud credentials by design.
 
@@ -59,13 +60,11 @@ ecosystem: Oracle (CAPOCI).
 ## Motivation
 
 Partners and customers deploying OpenShift on an external platform get a materially
-different install experience from integrated platforms. Oracle Cloud Infrastructure is the
-concrete driver, but the gap is general: any partner with a working Cluster API provider
-carries the whole provisioning burden themselves.
+different install experience from integrated platforms. Oracle Cloud Infrastructure is the concrete driver, but the gap is general: any partner with a working Cluster API provider carries the whole provisioning burden themselves.
 
-`OCPSTRAT-1322` covers the day-2 half of this problem — enabling a partner CAPI provider
-in-cluster for autoscaling and machine health checks. It explicitly does not cover
-install-time provisioning. This enhancement is the day-0 half.
+`OCPSTRAT-1322` covers the day-2 half of this problem — enabling a partner CAPI
+provider in-cluster for autoscaling and machine health checks. It explicitly
+does not cover install-time provisioning. This enhancement is the day-0 half.
 
 ### User Stories
 
@@ -263,40 +262,203 @@ Install time, done by the cluster creator:
   signed to resolve provider-specific dependencies such as CAPI version skew,
   infrastructure hooks (to resolve resources not supported by CAPI), etc
 
-   ```yaml
-   platform:
-     external:
-       platformName: foo
-       cloudControllerManager: External
-       clusterAPI:
-         name: foo
-         ref:
-            # Custom image 
-            image: quay.io/foo/openshift-capfoo:latest
-            binaryPath: /bin/cluster-api-provider-foo
-            args:
-            - --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true
-            componentsPath: /capi/crd/foo-infrastructure-components.yaml
-            manifestsTemplatePath: /capi/manifests/foo-infrastructure-components.yaml
-         hooks:
-           # creates api/api-int DNS; nothing else on this platform does
-           infraReady:
-             program: /capi/hooks/infra-ready
-           # creates the *.apps wildcard, which cannot be done at infraReady:
-           # it points at a load balancer the cluster's own CCM builds minutes
-           # into bootstrap, in response to a day-0 extra manifest
-           postProvision:
-             program: /capi/hooks/post-provision
-             args:
-             - --input-service=openshift-ingress/router-external-default
-             - --input-dns-zone=CHANGE-ME
-           # removes both again; neither is owned by Cluster API, so deleting
-           # the Cluster will not touch them
-           preDestroy:
-             program: /capi/hooks/pre-destroy
+  ```yaml
+  platform:
+    external:
+      platformName: foo
+      cloudControllerManager: External
+      clusterAPI:
+        name: foo
+        # Directory of the root where the CAPI assets will be to be consumed by installer.
+        # Default: <install-dir>/capi-installer
+        # The directory will have:
+        # bin/controller
+        # crd/infrastructure.yaml
+        # hooks/infraReady-*
+        # hooks/postProvision-*
+        # hooks/preDestroy-*
+        capiInstallerPath: <install-dir>/capi-installer
 
-   ```
+        # controller source: image or local
+        # Can be: image or local
+        # when image it's expected all resources be inside the image.
+        controller:
+          # image or local
+          sourceType: image
+          # OCI image or local path
+          # When imagem resources will be extracted to capiInstallerPath
+          image: quay.io/foo/openshift-capfoo:latest
+          args: []
 
+        # Single bundle manifest the local control plane loads. Decided: a single
+        # file, not a directory -- every clusterctl provider already publishes
+        # exactly one infrastructure-components.yaml.
+        # When using the image it must be in the root.
+        customResource: <install-dir>/capi-installer/infrastructure-components.yaml
+
+        # Additional manifests directory that will be
+        # automatically copyed to the installer manifest directory to rendered on boot.
+        # Rendered with clusterctl's substitution -- ${VAR}, ${VAR=default},
+        # ${VAR:="default"} -- over INSTALLER_-prefixed variables. An
+        # unresolvable variable is a validation error, not a pass-through.
+        manifestPath: <install-dir>/capi-installer/manifests
+
+        # hooks is automatically filled to defaults.
+        # change it when needs to override path and args.
+        hooks:
+          infraReady:
+            program: <install-dir>/capi-installer/hooks/infraReady
+            args: []
+          postProvision:
+            program: <install-dir>/capi-installer/hooks/postProvision
+            args: []
+          preDestroy:
+            program: <install-dir>/capi-installer/hooks/preDestroy
+            args: []
+
+  ```
+
+  **How the payload is obtained and used.** In order:
+
+  1. The partner publishes an OCI image payload through their own official release
+     process.
+  2. The installer pulls it, or the user pulls it beforehand and points at a local copy.
+  3. The installer extracts the image content — controller binary, infrastructure
+     components, manifests, hooks — into `capiInstallerPath`, which defaults to
+     `<install-dir>/capi-installer`. Every other path in the stanza is defaulted beneath
+     it, so a conforming payload needs no path configuration at all.
+  4. The installer renders the manifest templates, substituting its own
+     `INSTALLER_`-prefixed variables — `INSTALLER_INFRA_ID`, `INSTALLER_BASE_DOMAIN` and
+     the rest of the published set — using clusterctl's `${VAR}` syntax. A variable the
+     installer cannot resolve fails validation before any cloud call.
+
+  **On signing and trust.** The payload is built, maintained and shipped by the provider
+  through their own release process, and that is the trust boundary. **The installer
+  validates the payload's *structure*, not its *content*.** It checks that the expected
+  layout is present and that the declared compatibility range admits this release; it does
+  not inspect, scan or attest the controller, the manifests or the hooks. Correctness of
+  what is inside is the partner's responsibility, established by their release process and
+  by the validation model in the partner delivery work — not by an installer-side check.
+
+  **The payload layout is clusterctl's, not a new one.** Before inventing a format it is
+  worth noting that the three things this option needs are already conventions every
+  Cluster API provider follows, because `clusterctl` requires them of a provider
+  repository. Verified in both pilot providers:
+
+  | Need | Existing convention | Evidence |
+  | --- | --- | --- |
+  | One components bundle | `infrastructure-components.yaml`, a single file | why `customResource` is a file, not a directory |
+  | Declared contract version | `metadata.yaml`, `apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3`, `kind: Metadata`, mapping each release series to a Cluster API contract (`v1beta1`, `v1beta2`) | `cluster-api-provider-aws/metadata.yaml`, `cluster-api-provider-oci/metadata.yaml` — both present and published today |
+  | Manifest templates | `cluster-template*.yaml` with `${VAR}` substitution, including `${VAR=default}` and `${VAR:="default"}` | `cluster-api-provider-oci/templates/cluster-template.yaml` uses `${CLUSTER_NAME}`, `${KUBERNETES_VERSION}`, `${NAMESPACE}` among others |
+
+  So the payload should **reuse `metadata.yaml` verbatim** for Cluster API contract skew.
+  A partner publishes it already; requiring it costs them nothing and the installer gets
+  the one skew answer that matters most — which Cluster API contract the controller
+  implements — from a file whose semantics are defined upstream rather than by us.
+
+  **What clusterctl does not cover, and we therefore still need.** `metadata.yaml` maps
+  release series to a *Cluster API contract*. It says nothing about Kubernetes or
+  OpenShift versions, and nothing about where the hooks and the controller binary live —
+  neither concept exists upstream. That residue is small enough to carry in a second file
+  at the payload root, deliberately shaped like `metadata.yaml` so the two read as a pair:
+
+  ```yaml
+  # <capiInstallerPath>/openshift.yaml
+  apiVersion: external.openshift.io/v1alpha1
+  kind: ProviderPayload
+  # Compared against the Kubernetes version of the release payload being installed;
+  # the install is refused outside the range. The Cluster API contract comes from
+  # the adjacent clusterctl metadata.yaml and is not repeated here.
+  compatibility:
+    kubernetes:
+      min: "1.32"
+      max: "1.34"
+  # Paths relative to capiInstallerPath, so the installer validates structure rather
+  # than guessing it. This is the OpenShift-specific part: clusterctl has no notion
+  # of a controller binary on disk or of install-time hooks. Validation is
+  # exhaustive: every declared path must exist, the controller must be executable,
+  # and an executable the payload did not declare is rejected.
+  layout:
+    controller: bin/controller
+    customResource: infrastructure-components.yaml
+    manifestTemplates: manifests/
+    hooks:
+      infraReady: hooks/infraReady
+      postProvision: hooks/postProvision
+      preDestroy: hooks/preDestroy
+  ```
+
+  Image labels were considered as an alternative home for the same data and rejected: a
+  label is queryable without extracting, but it cannot carry the layout map and cannot be
+  versioned by `apiVersion`, so the payload would end up with two sources of truth for
+  one contract.
+
+  **Decided on this option:**
+
+  * **`controller.sourceType` is a union.** Exactly one of `image` or `local`. When
+    `image` is set, every artifact comes from the payload; local paths are not consulted.
+    Options 1 and 2 are therefore two modes of one field set, not two field sets.
+  * **`customResource` is a single file.** `customResourcePath` is dropped. Cluster API
+    providers publish exactly one `infrastructure-components.yaml`; a directory contract
+    would be a generalisation with no known consumer.
+  * **An unresolvable template token fails, at validation.** Before any cloud call and
+    before the controller starts, consistent with how every other install-config error
+    surfaces, and with clusterctl's own behaviour on an unset required variable.
+  * **Credentials for a private payload are the user's problem, not a new mechanism.**
+    Either the user pulls the image locally beforehand, or they append the partner's
+    registry credentials to the existing `pullSecret`. No new install-config field.
+  * **A tag is accepted; the reference must be fully qualified.** Starting with tags keeps
+    the first implementation simple. The install log records the resolved digest and the
+    artifact SHA-256, so a tagged install is still traceable after the fact even though it
+    is not reproducible from the install-config alone.
+  * **Hooks cannot be overridden with a local program when `sourceType: image`.** A user
+    may point at a different path *inside* the payload, but may not mix a payload
+    controller with a host-local hook. This keeps the payload the single unit of trust and
+    keeps the existing containment rule (`pkg/types/external/validation/platform.go:105`)
+    meaningful — it is simply re-anchored from the install directory to the extraction
+    root.
+
+  * **Templating follows clusterctl, not Go templates, and not kustomize.** The payload
+    already borrows `metadata.yaml` and the single-bundle convention from clusterctl, and
+    every provider's existing `cluster-template*.yaml` already uses `${VAR}`,
+    `${VAR=default}` and `${VAR:="default"}`. Adopting the same syntax means a partner
+    maintains one template dialect across both their upstream and their OpenShift
+    artifacts. Kustomize is not used: it is a much larger contract than variable
+    substitution, and it does not naturally express "fail if this value is unset", which
+    is the behaviour decided above.
+  * **Variables are uppercase with an `INSTALLER_` prefix** — `INSTALLER_INFRA_ID`,
+    `INSTALLER_BASE_DOMAIN`, and so on. The prefix keeps the installer-supplied set
+    distinct from a partner's own variables in the same file, so the two namespaces can
+    grow independently. The exact set is the partner-facing contract and is enumerated
+    when the layout is published; adding a variable is compatible, renaming one is not.
+  * **`openshift.yaml` stays a file; image labels are dropped.** This was decided by
+    reading clusterctl's own `metadata.yaml`: its only top-level keys are `apiVersion`,
+    `kind` and `releaseSeries`, and each release series entry carries only `major`,
+    `minor` and `contract`. It answers "which Cluster API contract does this provider
+    release implement" and says nothing about Kubernetes versions and nothing about
+    layout, so it does not resolve the skew question on its own. The residue therefore
+    needs a home that can be versioned and extended, which a label set is not.
+  * **A mirrored payload must be referenced by digest.** `imageDigestSources` is
+    digest-oriented by name and by its deprecated predecessor's split — `imageContentSources`
+    was the one that handled tags. Rather than reintroduce tag mirroring, the rule is
+    narrow: tags are accepted for a connected install, and a disconnected or mirrored
+    install must pin the payload by digest. Validation enforces this when
+    `imageDigestSources` is set.
+  * **`layout` validation is exhaustive.** Every path the payload declares must exist,
+    the controller must be executable, and anything executable that was *not* declared is
+    rejected. This is what makes "the installer validates structure, not content" a
+    guarantee rather than a slogan: a payload cannot carry unannounced executables. It is
+    decided now rather than later because tightening the rule after publication breaks
+    every partner already shipping.
+
+  **Disconnected and mirrored installs reuse `imageDigestSources`.** This is not a new
+  problem. `install-config.yaml` already carries `imageDigestSources`
+  (`pkg/types/installconfig.go:157`), which is how a mirrored install redirects the
+  release image before any cluster exists; the installer converts it into the in-cluster
+  `ImageDigestMirrorSet` afterwards (`pkg/asset/manifests/imagedigestmirrorset.go:45`).
+  The provider payload resolves through the same field. `pullSecret` covers
+  authentication and `imageDigestSources` covers redirection; neither needs a new
+  mechanism.
 
 2. Place the provider's Cluster API manifests in `<install-dir>/cluster-api/` and any day-0 cluster manifests in `<install-dir>/openshift/`.
 3. Run `openshift-install create cluster`.
@@ -310,7 +472,7 @@ Teardown:
 
 1. `openshift-install destroy cluster` reads the provider from cluster metadata.
 2. The `preDestroy` hook runs.
-3. The provider is restarted locally, its credential Secret re-applied, and the    infrastructure custom resources are deleted so the provider's finalizers can run.
+3. The provider is restarted locally, its credential Secret re-applied, and the infrastructure custom resources are deleted so the provider's finalizers can run.
 
 #### Variation: platforms that cannot carry the bootstrap ignition in instance metadata
 
@@ -361,16 +523,175 @@ install-config conventions, agent-based validation **warns** when the field is s
 
 Whether this is the right long-term shape — paths on a local filesystem versus an image reference, a CRD bundle, or a user-supplied manifest in the style of a cloud controller manager override — is an open question below. The pilot used paths because they are the smallest thing that proves the mechanism.
 
-> TODO #1: we must explore the [infrastructure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1) API updates. Similarity the [.status.external.cloudControllerManager.state=External](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1#status-platformstatus-external-cloudcontrollermanager) we must ensure CAPI field as well, something like `.status.external.clusterAPI.state=External`, `None`/unset by default. I think when it is `External` it will require more fields to captuer the external references of the image used to install, as well the Infra CRD such as providerImage
+#### Proposed shape: a provider payload image
+
+**Design sketch, not implemented.** The direction is to replace the loose filesystem paths
+with a single provider-published OCI payload image, extracted by the installer into one
+standard directory, with every other path defaulted beneath it. This is the Option 2
+fragment in *Workflow Description*, expressed as Go:
+
+```go
+// PROPOSED, not present at pilot commit c103ca8c90.
+type ClusterAPIProvider struct {
+    Name string `json:"name"`
+
+    // CAPIInstallerPath is the extraction root. Defaults to
+    // <install-dir>/capi-installer. Every path below defaults beneath it, so a
+    // conforming payload needs no path configuration.
+    CAPIInstallerPath string `json:"capiInstallerPath,omitempty"`
+
+    Controller ControllerSource `json:"controller"`
+
+    // CustomResource is the single components bundle the local control plane
+    // loads -- a file, not a directory: clusterctl providers publish exactly one
+    // infrastructure-components.yaml.
+    CustomResource string `json:"customResource,omitempty"`
+
+    // ManifestPath is one directory, copied into the installer's manifest
+    // directory and rendered on the way. Templating is not a separate mode: an
+    // unresolvable variable fails validation. Substitution is clusterctl's --
+    // ${VAR}, ${VAR=default}, ${VAR:="default"} -- over installer-supplied
+    // variables named INSTALLER_INFRA_ID, INSTALLER_BASE_DOMAIN and so on.
+    ManifestPath string `json:"manifestPath,omitempty"`
+
+    // Defaulted from the payload layout; set only to override.
+    Hooks *Hooks `json:"hooks,omitempty"`
+}
+
+// ControllerSource is a discriminated union: SourceType selects exactly one of
+// Image or BinaryPath, and validation rejects the other being set.
+type ControllerSource struct {
+    // SourceType is "image" or "local".
+    // +kubebuilder:validation:Enum=image;local
+    SourceType string `json:"sourceType"`
+
+    // Image is set when SourceType is "image". A fully qualified reference; a tag
+    // is accepted. Everything else comes from the payload and no local path is
+    // consulted, including hooks.
+    Image string `json:"image,omitempty"`
+
+    // BinaryPath is set when SourceType is "local". This is the pilot behaviour.
+    BinaryPath string `json:"binaryPath,omitempty"`
+
+    Args []string `json:"args,omitempty"`
+}
+```
+
+This is still install-config only — it adds no cluster-serving API and does not change the
+`api-approvers: None` position below. It does change the installer's responsibilities
+materially: pulling and extracting an image, rendering templates, and validating a
+declared payload layout are three things the pilot does not do. The unresolved parts of
+the shape are the bullets under Option 2 in *Workflow Description*; they are a precondition
+for implementing it, not for merging this enhancement.
+
+#### No cluster API change is proposed, and why
+
+**This enhancement proposes no change to the [Infrastructure][infra-api] config API, or to
+any other cluster-serving API.** `api-approvers: None` in the frontmatter is deliberate and
+accurate. The reason is the ordinary API-review test: a status field exists so that a
+*controller* can act on it, and today nothing in the cluster would read one. Everything the
+install produces is consumed by the installer itself — the provider name reaches
+`destroy cluster` through `metadata.json`
+(`pkg/types/clustermetadata.go:46`), and the artifact paths and SHA-256 sums reach support
+through the install log. Adding a field now would mean shipping a permanently-set,
+never-read value into a GA'd API, and the `Infrastructure` CVO-managed singleton is close
+to the worst place to do that: see the immutability rules quoted below.
+
+**The precedent that will apply when day-2 arrives.** `cloudControllerManager.state` is the
+exact shape this will need, and it is worth reading it now because it was designed under
+the same constraint. The install-config carries intent:
+
+```yaml
+platform:
+  external:
+    platformName: oci
+    cloudControllerManager: External
+```
+
+The installer translates that once, at manifest-generation time, into Infrastructure
+*status* — it is never reconciled afterwards
+(`pkg/asset/manifests/external/infrastructure.go:19-36`):
+
+```go
+return &configv1.ExternalPlatformStatus{
+    CloudControllerManager: configv1.CloudControllerManagerStatus{
+        State: ccmState, // "External" or "None"
+    },
+}
+```
+
+which lands in the cluster as:
+
+```yaml
+apiVersion: config.openshift.io/v1
+kind: Infrastructure
+metadata:
+  name: cluster
+status:
+  platform: External
+  platformStatus:
+    type: External
+    external:
+      cloudControllerManager:
+        state: External
+```
+
+and *is* read by controllers — that is the whole point of it. `state: External` is what
+causes new nodes to be tainted `node.cloudprovider.kubernetes.io/uninitialized` until the
+partner's cloud controller manager initialises them, so the machine-config and node
+lifecycle paths depend on it.
+
+**Two API constraints the day-2 design must respect**, both visible on the CCM field today
+(`vendor/github.com/openshift/api/config/v1/types_infrastructure.go:419-444`):
+
+* `State` carries `+kubebuilder:validation:XValidation:rule="self == oldSelf"`,
+  *"state is immutable once set"*, and `ExternalPlatformStatus` carries
+  *"cloudControllerManager may not be added or removed once set"*.
+* Therefore **a field shaped like `clusterAPI.state` cannot be adopted on day 2.** A
+  cluster installed before the field exists can never gain it. If day-2 enablement of a
+  Cluster API provider on an existing `platform: external` cluster is a requirement — and
+  OCPSTRAT-1322 suggests it is — then copying the CCM shape literally forecloses it, and
+  the field must either be mutable from unset, or live somewhere other than the
+  `Infrastructure` singleton.
+
+**The sketch, for the follow-up EP only.** What a day-2 consumer would plausibly want is
+provenance, not a boolean — which provider provisioned this cluster and from which
+artifacts, so that a cluster-capi-operator reconciling day-2 machines knows which
+controller image to run:
+
+```yaml
+status:
+  platformStatus:
+    type: External
+    external:
+      cloudControllerManager:
+        state: External
+      # NOT PROPOSED HERE. Illustrative shape for the day-2 follow-up.
+      clusterAPI:
+        name: foo
+        providerImage: quay.io/foo/openshift-capfoo@sha256:CHANGE-ME
+```
+
+This is a design sketch, not an API proposal. It is out of scope for this enhancement and
+belongs to whichever enhancement first names a controller that reads it.
+
+**On placement, if and when it is proposed.** [#2138][ep-2138] argues — correctly — that
+configuration repeated beneath each platform discriminator is the duplication mistake
+already made in the on-prem networking APIs, and places its new DNS and load-balancer
+fields as siblings of `platformSpec`/`platformStatus`. That reasoning does not extend to
+this field, and the distinction is worth stating once rather than rediscovering it in API
+review. DNS and endpoint ownership are a *concern* that every platform has and that no
+platform should have to re-declare. "Which Cluster API provider provisioned this cluster,
+and from which artifacts" is *platform identity itself*: it is meaningless on every
+platform except External, it has no cross-platform analogue to converge on, and it sits
+beside `cloudControllerManager.state`, which is already scoped this way for the same
+reason. The test is whether a second platform would ever want the same field; for DNS
+policy the answer is yes, for external provider provenance it is no.
 
 > TODO #2: We must ensure the CAPI objects of local control plane are saved in the cluster, even if it would be read-only, or as a dump of objects in a ConfigMap/Secret.
-
-
-> TODO #1: the [Infrastructure][infra-api] config API likely needs to record that this path was used. By analogy with `.status.platformStatus.external.cloudControllerManager.state`, something like `.status.platformStatus.external.clusterAPI`, absent by default, carrying the provider name and the artifact references the install resolved — so that a cluster can be identified as externally provisioned without reading `metadata.json`.
-> **On placement.** [#2138][ep-2138] argues — correctly — that configuration repeated beneath each platform discriminator is the duplication mistake already made in the on-prem networking APIs, and places its new DNS and load-balancer fields as siblings of `platformSpec`/`platformStatus`. That reasoning does not extend to this field, and the distinction is worth stating once rather than rediscovering it in API review. DNS and endpoint ownership are a *concern* that every platform has and that no platform should have to re-declare. "Which Cluster API provider provisioned this cluster, and from which artifacts" is *platform identity itself*: it is meaningless on every platform except External, it has no cross-platform analogue to converge on, and it sits beside `cloudControllerManager.state`, which is already scoped this way for the same reason. The test is whether a second platform would ever want the same field;for DNS policy the answer is yes, for external provider provenance it is no.
+> Note: there is already a precedent and a partial implementation of this. `kube-system/cluster-config-v1` is created from the redacted install-config (`pkg/asset/manifests/operators.go:123,352`), and because the redaction switch has cases only for vSphere and Nutanix credentials (`:363,:375`), the whole `platform.external.clusterAPI` stanza — provider name, binary path, components path, args, hook programs — is already carried into the cluster today, unredacted. That is a ConfigMap, needs no API review, and is the cheapest place to put a dump of the local Cluster API objects. It is also an unchosen finding rather than a decision: whether partner hook arguments belong in a world-readable ConfigMap has not been reviewed.
 
 [infra-api]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/config_apis/infrastructure-config-openshift-io-v1
-
 
 ### Topology Considerations
 
@@ -385,7 +706,7 @@ This enhancement targets standalone clusters exclusively. A `platform: external`
 
 #### Single-node Deployments or MicroShift
 
-Not applicable. MicroShift does not use `openshift-install`. Single-node OpenShift on `platform: external` is not prevented by anything here — the provider would simply provision one machine — but it is untested and not a goal of this work; no SNO-specific resource or footprint consideration arises, because the  installer-side change adds no runtime component to the cluster.
+Not applicable. MicroShift does not use `openshift-install`. Single-node OpenShift on `platform: external` is not prevented by anything here — the provider would simply provision one machine — but it is untested and not a goal of this work; no SNO-specific resource or footprint consideration arises, because the installer-side change adds no runtime component to the cluster.
 
 #### OpenShift Kubernetes Engine
 
@@ -464,8 +785,16 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
   switch — to serve a platform most users will never use. The risk to integrated platforms
   is small but not zero, which is why it is isolated into the smallest possible changes.
 * Supplying providers as **filesystem paths** is awkward for automation and for disconnected
-  environments, and may not be the shape we want long term. # TODO Review as we want to make sure images is provided instead local paths
-* It creates an expectation that Red Hat will help partners debug their providers. #TODO review: this is ture, and it's part of VCSP program. We must provide mechanism to help partners to debug itself, and interface to discuss approaches with partners. Is there a "openshift community" channel that partners can reach us out, without applugin to a program or something else?
+  environments. The payload image (Option 2 in the Workflow Description) is the intended
+  form; paths remain as the pilot's proven mode and as a developer and CI convenience.
+  Whether they stay a supported partner-facing form is Open Question 1.
+* It creates an expectation that Red Hat will help partners debug their providers. The
+  intent is the opposite — partners must be able to diagnose their own provider — but the
+  mechanism for that is not defined here, and nor is the venue. **Which forum do partners
+  outside the VCSP programme use to reach OpenShift engineering about an external
+  provider?** Today there is no answer that does not route through a programme, and the
+  delivery model work must either name an existing community channel or accept that the
+  only path is VCSP.
 
 ## Alternatives (Not Implemented)
 
@@ -483,7 +812,7 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
 
 ## Open Questions [optional]
 
-1. **What is the long-term shape of the provider reference?** Filesystem paths proved the    mechanism. An image reference, a CRD bundle, or a user-supplied manifest in the style of existing cloud controller manager overrides would all be more operable. This should be settled before Tech Preview.
+1. **Does the local-path form survive Tech Preview, or does the payload image replace it?** The shape itself is settled: the Workflow Description proposes a `controller.sourceType` union of a provider-published payload image (Option 2) and the pilot's filesystem paths (Option 1), with the payload layout, templating syntax, variable vocabulary, compatibility file and validation strictness all decided there. What is not settled is whether Option 1 remains a supported, documented form for partners, or is retained only as a developer and CI convenience once payload images exist.
 2. **How is the scheme fallback for unknown kinds finally scoped?** Three candidates: restrict to `platform: external`, validate against the CRDs actually present in `componentsPath`, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.
 3. **Should the installer provide a first-class "bootstrap ignition is staged elsewhere, here is the pointer" mechanism?** Leaving it to each partner means each partner reimplements the same credential hazard.
 4. **Should `clusterAPI.args` be able to override an installer-supplied flag by name, rather than only append?** Today's answer is a per-partner wrapper script.
@@ -494,15 +823,15 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
 9.  **Who supplies the cluster's ingress and API endpoint addresses on `platform: external`?** Nothing currently asks the platform for an external address: the ingress `Service` is hand-authored per provider, and the API endpoint arrives only as whatever the partner's Cluster API provider happened to configure. There are three plausible answers and they are not equivalent.
     *(a)* Every provider hand-authors the ingress `Service` and the partner's cloud controller manager reconciles it — the status quo, and the right answer
     on a cloud-like external platform.
-    *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of    [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently     scoped to `platform: None`.
-    *(c)* The installer derives them from the Cluster     API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
+    *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently scoped to `platform: None`.
+    *(c)* The installer derives them from the Cluster API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
 
 10. **Should an extra manifest directory, from pilot, be allowed to contain multiple documents?** The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
 11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for at least one partner platform no generic, multi-tenant image is published. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
 12. **Automatic CSR approval.** There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
 13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**:
     [openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
-    This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names bbecomes product behaviour rather than a partner script, and the hook surface     narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
+    This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names becomes product behaviour rather than a partner script, and the hook surface narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
     Three sub-questions, none of which this enhancement can answer alone:
     * **Address source.** The shared model knows two: discovered node addresses, and administrator-reserved VIPs. A partner Cluster API provider produces a third — a provider-allocated control-plane endpoint, reported on `Cluster.spec.controlPlaneEndpoint`, which is unknown until `Cluster.status.infrastructureReady`. It is neither a node address nor a reserved VIP, and #2138 is explicit that provider-observed endpoints must not be written into administrator intent as though they were VIPs. The mapping from a Cluster API endpoint into `status.networking.endpoints` has no owner today.
     * **Bootstrap ordering.** #2138 requires that bootstrap not depend on an in-cluster controller that needs the DNS being configured. On this path the endpoint is not known at `create cluster` time, so the installer would have to resolve policy up front and reconcile the address after `infraReady` — the same constraint their None SNO installer path carries, but with a later address.
@@ -560,6 +889,7 @@ Phases below correspond to the Jira Epics tracked under OCPSTRAT-3724.
 * CI covers the reference arm as a presubmit (optional) and a periodic (non-blocker).
 * No-regression evidence for integrated platforms exists for each shared-code change.
 * Open Questions 1, 2, 5 and 6 have written, agreed answers.
+* Open Question 13 is answered in its narrow form only: whether the hook contract is designed as permanent, or as a bridge that a later adoption of the shared `Infrastructure` networking contract is expected to replace for the DNS case. Nothing here waits on [#2138][ep-2138] itself, which is provisional and has no External owner.
 * End-to-end testing and documentation are complete; the feature is behind a feature gate.
 
 ### Tech Preview -> GA
@@ -603,7 +933,18 @@ documentation and policy question rather than a code one.
 There is no skew between installer and cluster components introduced here, because this
 enhancement adds no cluster component.
 
-> TODO/Review WRT^ can we create a "external policy lifecycle" so that partners can built their CAPI images with skew resolved? If we introduce some kind standarized image structure/builder to require partners to built with including the CAPI controller, infrastructure objects, and whole manifest templates to have a OCP cluster? As well the hooks if needs it? so that we could create validations on top of that image if it is compliant generically with external requirements, increasing quality and confidence when customers will use it! Havinf standard images installer can also implement validations to ensure provider's image readiness.
+**The provider payload image is the proposed answer to day-0 skew.** A payload carries the
+controller, the infrastructure components, the manifest templates and the hooks as one
+versioned unit, together with the two compatibility files described in the Workflow
+Description: clusterctl's `metadata.yaml`, which declares the Cluster API contract the
+controller implements, and `openshift.yaml`, which declares the Kubernetes version range
+the payload supports. The installer compares both against the release payload being
+installed and refuses the install outside the declared range, before any cloud call.
+
+That turns skew from a documentation question into a validated one for day 0, and it is
+the same standard structure that makes a generic compliance check possible at all — the
+installer can verify a payload's readiness because every payload has the same shape. It
+does not resolve the day-2 case, which remains with the delivery model work.
 
 ## Operational Aspects of API Extensions
 
@@ -612,8 +953,12 @@ apiserver, no admission or conversion webhook, no finalizer, no new controller i
 cluster. The only API change is an optional field in `install-config.yaml`, which is
 consumed by the installer binary and never served, persisted or reconciled.
 
-
-> TODO/Review ^ if we'll enhance the infrastructure object
+This holds only because no change to the `Infrastructure` config API is proposed here. The
+reasoning, the `cloudControllerManager.state` precedent it would follow, and the
+immutability constraint that makes the CCM shape unsafe to copy are in
+*API Extensions → No cluster API change is proposed, and why*. If a later revision adds an
+`Infrastructure` status field, this section and `api-approvers: None` both become wrong and
+must change together.
 
 Consequently there is no steady-state CPU, memory or API-call impact on an installed
 cluster, no new failure mode for the cluster's API server, and no SLO to state for cluster
@@ -624,7 +969,16 @@ partner-supplied provider fails the install, with no cluster created and no part
 beyond whatever the provider created in the partner's cloud before failing. Teardown of
 that partial state is the `destroy cluster` path, which is in scope and tested.
 
-> ^ TODO/Review there is also a risk of partner not continuous testing the OCP versions. In VCSP program it is resolved by a partner required to validate their cluster every OCP version they want to be tagged as supported/validated. Here, for standalone partners, which does not have OCP Prow/CI jobs running on top of provider, it does not exists. How we can ensure partner is continuously testing the installation method? Will we route partner to VCSP flow when they want to fall into RH/OCP support flow as "Validated Provider to run OpenShift"?
+>  **How does a partner outside VCSP demonstrate continuous testing of their provider
+>  against each OpenShift version?** Inside the VCSP programme this is already solved: a
+>  partner validates their cluster on every OpenShift version they want tagged as
+>  supported. A standalone partner has no Prow or CI running OpenShift on their platform
+>  and therefore no equivalent obligation, so nothing detects a provider that has silently
+>  stopped working on a newer release. **Is the answer simply that a partner wanting Red
+>  Hat support must enter the VCSP flow as a validated provider, or does this enhancement
+>  need a lighter-weight evidence requirement of its own?** This is a programme question,
+>  not an engineering one; it belongs to the partner delivery and support model work, and
+>  is recorded here because the install path is where the absence first shows.
 
 ## Support Procedures
 
@@ -641,13 +995,31 @@ each artifact, its path, its source and its SHA-256 — never its content.
    flag. Symptom: the local Cluster API control plane reports the provider unhealthy and
    `/healthz` never answers. This is the most common first-time failure and it is a partner
    provider issue, not an installer issue.
->  ^ TODO/Review/Q: is /healthz standard way to check? can we query KAS endpoint?
+>  Note: `/healthz` is the right check and is already what the installer does. It is
+>  controller-runtime's own convention, which every Cluster API provider inherits, and the
+>  installer polls it at exactly the `host:port` it rendered into the controller's
+>  `--health-addr` argument (`pkg/clusterapi/system.go:770`, host from
+>  `suggestHealthHostPort`). Querying a Kubernetes API server endpoint would not substitute:
+>  at this point in the install the only API server is the installer's local, ephemeral
+>  control plane, whose health says nothing about whether the provider process came up.
+>  The one real constraint this places on a provider is that it must accept `--health-addr`
+>  by that name, or be wrapped by something that translates it.
 3. *Infrastructure provisioning* — `Cluster.status.infrastructureReady` never becomes true.
    The authoritative detail is in the provider's own logs and in the status conditions on
    the provider's infrastructure resource, both captured in the installer's Cluster API
    output directory. **This is partner code.**
 4. *A hook* — a non-zero exit fails the install with the hook's exit code.
-> ^ TODO/Review: a validation could check if hooks are malformed scripts? Can we expand hooks for very specific purpose, such as "hookDNSCreator", "hookLBCreator", then for each has a bind test/monitor such as "reaching KAS endpoint" providing more accurated where the issue is?
+>  **Should hooks stay general-purpose, or be specialised into named hooks with their own
+>  success checks?** A specialised set — a DNS creator, a load-balancer creator — could
+>  each carry a bound verification (resolve the API name; reach the API endpoint), so a
+>  failure says *DNS was not created* rather than *the program exited 1*. The cost is that
+>  Red Hat then has to enumerate every cloud-specific action a partner might need, and a
+>  partner whose platform needs something not on the list has nowhere to put it. This
+>  overlaps Open Question 13 directly: if the DNS and endpoint cases move to the shared
+>  `Infrastructure` networking contract, the specialised hooks lose most of their subject.
+>  Note that static validation of a hook program is not an option — the installer can check
+>  that it exists, is executable and is contained within the extraction root, but cannot
+>  determine whether a script is well-formed without running it.
 
 **Routing a case.** Failures at (1) are installer issues. Failures at (2) and (3) are
 almost always partner-provider issues and the provider name and artifact hash in the log
@@ -659,7 +1031,15 @@ establish which of the four stages failed and route accordingly.
 cluster that reaches a healthy control plane but whose workers never join is most likely
 hitting this, not a provider defect; `oc get csr` will show pending requests.
 
-> ^ TODO/Review: can we implement a pooler to report this on installer or eventually csr approver when platform external with CAPI?
+>  **Should the installer poll for pending CSRs and report them, short of approving them?**
+>  Reporting is cheap and does not need an owner: the installer already waits for workers,
+>  so it could say *N certificate signing requests are pending approval* instead of timing
+>  out silently, which is the whole of today's diagnostic cost. Approving them is a
+>  different question with a different owner and is Open Question 12 — the agreed direction
+>  there is a webhook that compares a CSR against the instance it claims to come from, and
+>  it is explicitly not the installer. This is also not specific to Cluster API: it applies
+>  to `platform: external` and `platform: none` alike, which argues against solving it in
+>  this enhancement's code.
 
 **Consequences of disabling.** Removing the `clusterAPI` stanza from a future install
 simply returns that install to the pre-existing behaviour — `platform: external` with no
