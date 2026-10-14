@@ -9,7 +9,7 @@ reviewers: # Include a comment about what domain expertise a reviewer is expecte
   - TBD, "cloud-team, for the platform External contract and the partner support boundary"
   - TBD, "cluster-capi-operator, for the day-0/day-2 boundary and provider packaging"
 approvers: # This should be a single approver.
-  - TBD
+  - "@patrickdillon"
 api-approvers: # No cluster API change: install-config only, no CRD, aggregated apiserver, webhook or finalizer. See "Operational Aspects of API Extensions".
   - None
 creation-date: 2026-10-06
@@ -18,14 +18,14 @@ status: provisional
 tracking-link: # link to the tracking ticket that corresponds to this enhancement
   - https://issues.redhat.com/browse/OCPSTRAT-3724
 see-also:
-  - ["/enhancements/cloud-integration/infrastructure-external-platform-type.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cloud-integration/infrastructure-external-platform-type.md)
-  - ["/enhancements/installer/bootstrapping-clusters-with-capi-providers.md"](https://github.com/openshift/enhancements/blob/master/enhancements/installer/bootstrapping-clusters-with-capi-providers.md)
-  - ["/enhancements/cloud-integration/out-of-tree-provider-support.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cloud-integration/out-of-tree-provider-support.md)
-  - ["/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md"](https://github.com/openshift/enhancements/blob/master/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md)
+  - "/enhancements/cloud-integration/infrastructure-external-platform-type.md"
+  - "/enhancements/installer/bootstrapping-clusters-with-capi-providers.md"
+  - "/enhancements/cloud-integration/out-of-tree-provider-support.md"
+  - "/enhancements/cluster-api/installing-cluster-api-components-in-ocp.md"
   # Day-2 shared DNS/LB contract; candidate replacement for part of this EP's hook surface.
-  - ["infrastructure-driven-cluster-dns-and-load-balancing"](https://github.com/openshift/enhancements/pull/2138)
+  - "https://github.com/openshift/enhancements/pull/2138"
   # Earlier, unmerged attempt at DNS/LB on None and External with per-platform fields.
-  - ["Prior art: DNS/LB on None and External"](https://github.com/openshift/enhancements/pull/1666)
+  - "https://github.com/openshift/enhancements/pull/1666"
 replaces: []
 superseded-by: []
 ---
@@ -34,17 +34,27 @@ superseded-by: []
 
 ## Summary
 
-`platform: external` today has no installer-native provisioning path. A partner who
-already maintains a Cluster API infrastructure provider cannot use it at install time,
-so clusters on their platform are stood up by Assisted Installer or UPI and the
-infrastructure is created outside the installer's control.
+`platform: external` today has no installer-native provisioning path.
+A partner who already maintains a Cluster API infrastructure provider
+cannot use it at install time, so clusters on their platform are stood
+up by Assisted Installer or UPI and the infrastructure is created
+outside the installer's control.
 
-This enhancement lets `openshift-install create cluster` provision infrastructure for a
-`platform: external` cluster by running a Cluster API provider **out-of-tree**. The provider's controller binary and component manifests are supplied by the user as (?TBD) container images or paths(used in pilot, need to check feasability); the installer's existing local, ephemeral Cluster API control plane runs them exactly as it runs the providers it embeds. Three optional user-supplied hooks
-cover the cloud-specific work the installer cannot do, because on `platform: external` it
-holds no cloud credentials by design.
+This enhancement lets `openshift-install create cluster` provision
+infrastructure for a `platform: external` cluster by running a Cluster
+API provider **out-of-tree**. The provider's controller binary and
+component manifests are supplied by the user as (?TBD) container images
+or(and?) paths(used in pilot, need to check feasability); the installer's
+existing local, ephemeral Cluster API control plane runs them exactly as
+it runs the providers it embeds. Three optional user-supplied hooks
+cover the cloud-specific work the installer cannot do, because on
+`platform: external` it holds no cloud credentials by design.
 
-The design is deliberately provider-agnostic: there is no Provider-specific (OCI-specific, AWS-specific, etc) code path. It has been exercised end to end on two providers, one reference provider embedded in the installer (AWS/CAPA) and one that with no code specific on OpenShift ecosystem: Oracle (CAPOCI).
+The design is deliberately provider-agnostic: there is no Provider-specific
+(OCI-specific, AWS-specific, etc) code path. It has been exercised end to
+end on two providers, one reference provider embedded in the
+installer (AWS/CAPA) and one that with no code specific on OpenShift
+ecosystem: Oracle (CAPOCI).
 
 ## Motivation
 
@@ -127,7 +137,25 @@ This enhancement adds, for `platform: external` only:
 6. A hidden `openshift-install extract cluster-api <provider>` command that writes an
    embedded provider's artifacts to a directory, so a partner can see the exact shape the
    contract expects. (not mandatory, well used in the Pilot to reproduce stable CAPI with platform type external in integrated providers)
-> ^TODO/Review: it would be nice if this extract also saves the manifests, it may require sample install-config to render those
+
+   **Decided: `extract` emits a complete reference implementation, in input layout.** Today
+   it writes two things — the controller binary and
+   `<name>-infrastructure-components.yaml` (`pkg/clusterapi/extract.go:95,105`). That is
+   enough to prove the artifacts exist and not enough to be a worked reference. The
+   intended behaviour is that `extract` writes **the binary, the provider's infrastructure
+   CRDs and components, and the cluster manifests** for the named provider, laid out in
+   **exactly the directory shape the installer expects as input** — so that a partner's
+   first action is to diff their own tree against it, and their second is to run it.
+   Concretely, the output directory is an install directory skeleton: provider artifacts
+   where `binaryPath`/`componentsPath` would point, Cluster API manifests under
+   `cluster-api/`, day-0 cluster manifests under `openshift/`, and the matching
+   `install-config.yaml` fragment.
+
+   Two things follow and are not yet settled. The cluster manifests are asset-graph output
+   (`pkg/asset/manifests/clusterapi/cluster.go:212`), not embedded files, so producing them
+   requires either a minimal install-config as input to `extract` or templated manifests
+   with placeholder substitution; and whichever is chosen fixes the answer to "do partners
+   ship manifests or manifest templates?" below. See Open Question 1.
 
 ### Workflow Description
 
@@ -147,9 +175,129 @@ Provider preparation, done once by the partner provider developer:
 Install time, done by the cluster creator:
 
 1. Write `install-config.yaml` with `platform.external.clusterAPI` pointing at the binary and components directory.
-```sh
-# TODO add a sample platform spec
-```
+
+  **Option 1 - Local Binary strategy (PILOT)**
+  Both fragments below are from pilot runs, with environment-specific values replaced by
+  `CHANGE-ME`. The whole partner contract is the `clusterAPI` stanza; everything above and
+  below it is ordinary `platform: external`.
+
+   **AWS, with Cluster API Provider AWS (CAPA).** The reference arm. Note that `args` is
+   what carries provider-specific flags the installer knows nothing about — here the
+   feature gate CAPA requires before it will accept `AWSMachine.spec.ignition` at all.
+
+   ```yaml
+   platform:
+     external:
+       platformName: aws
+       cloudControllerManager: External
+       clusterAPI:
+         name: aws
+         binaryPath: /CHANGE-ME/capa-artifacts/cluster-api-provider-aws
+         componentsPath: /CHANGE-ME/capa-artifacts/aws-infrastructure-components.yaml
+         hooks:
+           # creates api/api-int DNS; nothing else on this platform does
+           infraReady:
+             program: hooks/infra-hook.sh
+           # creates the *.apps wildcard, which cannot be done at infraReady:
+           # it points at a load balancer the cluster's own CCM builds minutes
+           # into bootstrap, in response to a day-0 extra manifest
+           postProvision:
+             program: hooks/infra-hook.sh
+             args:
+             - --input-service=openshift-ingress/router-external-default
+             - --input-dns-zone=CHANGE-ME
+           # removes both again; neither is owned by Cluster API, so deleting
+           # the Cluster will not touch them
+           preDestroy:
+             program: hooks/infra-hook.sh
+         args:
+         - --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true
+   ```
+
+   **OCI, with Cluster API Provider OCI (CAPOCI).** The arm that evidences the central
+   claim, because CAPOCI is not embedded in the installer. Two differences are worth
+   reading: `binaryPath` is a shell wrapper, which is legal on purpose
+   (`pkg/clusterapi/artifacts.go:195`), and no feature gate is needed because CAPOCI has no
+   opinion about bootstrap data format.
+
+   ```yaml
+   platform:
+     external:
+       platformName: oci
+       cloudControllerManager: External
+       clusterAPI:
+         name: oci
+         # NOT the CAPOCI binary: a wrapper translating the installer's
+         # --health-addr into the provider's --health-probe-bind-address, the
+         # one installer-supplied flag CAPOCI does not declare. It must
+         # translate rather than drop the flag -- the installer polls /healthz
+         # at exactly the address it passed.
+         binaryPath: /CHANGE-ME/capoci-artifacts/capoci-shim.sh
+         componentsPath: /CHANGE-ME/capoci-artifacts/oci-infrastructure-components.yaml
+         hooks:
+           # creates api/api-int DNS; adds a 22623 listener and backend set to
+           # the API load balancer, which CAPOCI has no field for; and writes
+           # the CCM and CSI config Secrets, whose inputs are OCIDs that do not
+           # exist until Cluster API has built the network -- so they cannot be
+           # day-0 manifests
+           infraReady:
+             program: hooks/infra-hook.sh
+           postProvision:
+             program: hooks/infra-hook.sh
+             args:
+             - --input-service=openshift-ingress/router-external-default
+           preDestroy:
+             program: hooks/infra-hook.sh
+         args:
+         - --init-oci-clients-on-startup=false
+   ```
+
+   On both platforms `compute[].replicas` is `0`: the installer generates no MachineSets
+   for `platform: external` (`pkg/asset/machines/worker.go:807`), so day-0 workers are
+   Cluster API `Machine` objects in `<install-dir>/cluster-api/`, not a compute pool.
+
+  ___**Option 2 - CAPI Installer Image strategy**___
+  **FOO provider with CAPFOO**
+  
+  Option with a integrated custom image built and maitained by FOO provider
+  signed to resolve provider-specific dependencies such as CAPI version skew,
+  infrastructure hooks (to resolve resources not supported by CAPI), etc
+
+   ```yaml
+   platform:
+     external:
+       platformName: foo
+       cloudControllerManager: External
+       clusterAPI:
+         name: foo
+         ref:
+            # Custom image 
+            image: quay.io/foo/openshift-capfoo:latest
+            binaryPath: /bin/cluster-api-provider-foo
+            args:
+            - --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true
+            componentsPath: /capi/crd/foo-infrastructure-components.yaml
+            manifestsTemplatePath: /capi/manifests/foo-infrastructure-components.yaml
+         hooks:
+           # creates api/api-int DNS; nothing else on this platform does
+           infraReady:
+             program: /capi/hooks/infra-ready
+           # creates the *.apps wildcard, which cannot be done at infraReady:
+           # it points at a load balancer the cluster's own CCM builds minutes
+           # into bootstrap, in response to a day-0 extra manifest
+           postProvision:
+             program: /capi/hooks/post-provision
+             args:
+             - --input-service=openshift-ingress/router-external-default
+             - --input-dns-zone=CHANGE-ME
+           # removes both again; neither is owned by Cluster API, so deleting
+           # the Cluster will not touch them
+           preDestroy:
+             program: /capi/hooks/pre-destroy
+
+   ```
+
+
 2. Place the provider's Cluster API manifests in `<install-dir>/cluster-api/` and any day-0 cluster manifests in `<install-dir>/openshift/`.
 3. Run `openshift-install create cluster`.
 4. The installer resolves and validates the provider artifacts, starts the local Cluster API control plane, installs the provider's components, runs the provider's controller, and applies the user's Cluster API manifests.
@@ -352,7 +500,7 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
 10. **Should an extra manifest directory, from pilot, be allowed to contain multiple documents?** The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
 11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for at least one partner platform no generic, multi-tenant image is published. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
 12. **Automatic CSR approval.** There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
-13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**
+13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**:
     [openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
     This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names bbecomes product behaviour rather than a partner script, and the hook surface     narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
     Three sub-questions, none of which this enhancement can answer alone:
