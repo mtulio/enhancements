@@ -171,7 +171,9 @@ Provider preparation, done once by the **partner provider developer**:
    the single `infrastructure-components.yaml` bundle `clusterctl` already requires.
 3. Write the Cluster API manifest templates for a cluster on that platform, the day-0
    manifest templates their cloud needs, and the optional hook programs.
-3. Create the manifest for the payload image, this will be validated by installer, and allow partner to customize payload paths. Example for reference provider AWS `openshift.yaml`:
+4. Write the payload descriptor, `openshift.yaml`, declaring the layout. The installer
+   validates it, and it is what lets a partner name their own paths rather than adopt the
+   installer's. For the AWS/CAPA reference provider:
 ```yaml
 # Provider payload descriptor for the AWS/CAPA reference example.
 #
@@ -263,7 +265,9 @@ layout:
     preDestroy: hooks/pre-destroy.sh
 
 ```
-4. See below an example of payload image content in the reference implementation on AWS maitained by partner to create the **provider payload image** for AWS CAPI provider (CAPA) and extra manifest to deploy CCM and Ingress' Service LoadBalancer:
+5. The result is one tree. Below is the AWS/CAPA reference provider's, carrying the
+   Cluster API templates, the hooks, and the day-0 manifests that deliver the cloud
+   controller manager and the ingress load-balancer `Service`:
 ```sh
 $ tree payload/
 payload/
@@ -287,11 +291,11 @@ payload/
 └── openshift.yaml
 
 ```
-4. Assemble all of the above into a **provider payload image** with the layout below, and
-   publish it through their own release process. [This](https://github.com/mtulio/cluster-api-provider-foo-openshift/pull/1/changes#diff-5fcdf9b4580789697d834d1456a22bcfaa236d668fc180cad4775afc36ed5914) is an example of reference provider AWS
-
-5. The partner publishes an OCI image payload through their own official release
-    process.
+6. Assemble that tree into an OCI image and publish it through their own release process.
+   Nothing about the build is OpenShift-specific: the image filesystem *is* the payload,
+   so an ordinary `Containerfile` that copies these paths in is the whole of it. A worked
+   reference implementation, buildable and publishable end to end, is
+   [cluster-api-provider-foo-openshift](https://github.com/mtulio/cluster-api-provider-foo-openshift).
 
 Install time, done by the **cluster creator**:
 
@@ -426,7 +430,7 @@ Install time, done by the **cluster creator**:
   at the payload root, deliberately shaped like `metadata.yaml` so the two read as a pair:
 
   ```yaml
-  # <capiProviderInstallerPath>/openshift.yaml
+  # <capiInstallerPath>/openshift.yaml
   apiVersion: external.openshift.io/v1alpha1
   kind: ProviderPayload
   # Compared against the Kubernetes version of the release payload being installed;
@@ -633,8 +637,15 @@ Install time, done by the **cluster creator**:
   **Disconnected and mirrored installs reuse `imageDigestSources`.** This is not a new problem. `install-config.yaml` already carries `imageDigestSources` (`pkg/types/installconfig.go:157`), which is how a mirrored install redirects the release image before any cluster exists; the installer converts it into the in-cluster `ImageDigestMirrorSet` afterwards (`pkg/asset/manifests/imagedigestmirrorset.go:45`).
   The provider payload resolves through the same field. `pullSecret` covers authentication and `imageDigestSources` covers redirection; neither needs a new mechanism.
 
-2. Place the provider's Cluster API manifests in `<install-dir>/cluster-api/` and any day-0 cluster manifests in `<install-dir>/openshift/`. With a payload these are rendered there by the installer from the payload's two template trees; the destination is the same either way.
-   Note that `compute[].replicas` is `0` on this platform regardless of form: the installer generates no MachineSets for `platform: external` (`pkg/asset/machines/worker.go:807`), so day-0 workers are Cluster API `Machine` objects in `<install-dir>/cluster-api/`, not a compute pool.
+2. With a payload, place nothing: the installer renders the payload's two template trees
+   into `<install-dir>/external-install/` and `<install-dir>/external-install/extra-manifests/`
+   itself. In the local-path mode the cluster creator writes those same two directories by
+   hand. Note the directory is `external-install/` and deliberately **not** the installer's
+   own `cluster-api/` (`pkg/types/external/doc.go:23`): that one is an asset load path
+   whose contents the asset store discards when an upstream dependency is dirty, and it is
+   also where the installer unpacks the Cluster API and envtest binaries, so it is
+   installer scratch space rather than a user interface.
+   Note also that `compute[].replicas` is `0` on this platform regardless of form: the installer generates no MachineSets for `platform: external` (`pkg/asset/machines/worker.go:807`), so day-0 workers are Cluster API `Machine` objects in `<install-dir>/external-install/machines/`, not a compute pool.
 3. Run `openshift-install create cluster`.
 4. The installer resolves and validates the provider artifacts, starts the local Cluster API control plane, installs the provider's components, runs the provider's controller, and applies the user's Cluster API manifests.
 5. On `Cluster.status.infrastructureReady`, the `infraReady` hook runs — typically to create DNS records or publish the bootstrap ignition somewhere the platform can reach.
@@ -658,95 +669,89 @@ Whether the installer should offer a first-class mechanism is an open question b
 
 ### API Extensions
 
-One new optional field on an existing platform stanza, `platform.external.clusterAPI`, of type `*ClusterAPIProvider` (`pkg/types/external/platform.go:39`, pilot branch `pilot-platform-external-capi` at commit `c103ca8c90`). `platform: external` already exists and is unchanged otherwise.
+One new optional field on an existing platform stanza, `platform.external.clusterAPI`, of
+type `*ClusterAPIProvider` (`pkg/types/external/platform.go:39`). `platform: external`
+already exists and is unchanged otherwise. The proposed shape is below; the loose
+filesystem paths the pilot used are the same field set in its other mode, and are recorded
+under *Alternatives*.
 
 ```go
 // pkg/types/external/platform.go:62
 type ClusterAPIProvider struct {
-    Name           string   `json:"name"`
-    ComponentsPath string   `json:"componentsPath"`
-    Args           []string `json:"args,omitempty"`
-    Hooks          *Hooks   `json:"hooks,omitempty"`
-}
-
-// pkg/types/external/platform.go:115
-type Hooks struct {
-    InfraReady    *Hook `json:"infraReady,omitempty"`
-    PostProvision *Hook `json:"postProvision,omitempty"`
-    PreDestroy    *Hook `json:"preDestroy,omitempty"`
-}
-
-// pkg/types/external/platform.go:168
-type Hook struct {
-    Program string   `json:"program"`
-    Args    []string `json:"args,omitempty"`
-}
-```
-
-This is install-config only. It is not a cluster API: it is not served by the API server, it is not persisted into the cluster, and it has no CRD, webhook, aggregated apiserver or finalizer. Validation is ordinary install-config validation returning a `field.ErrorList` (`pkg/types/external/validation/platform.go`).
-
-The agent-based installer shares the install-config format but routes data through assisted-service's cluster manifests, and this field is not passed through. Per the install-config conventions, agent-based validation **warns** when the field is set to a non-default value rather than ignoring it silently.
-
-`ClusterPlatformMetadata` gains an `External` member (`pkg/types/clustermetadata.go:46`) so `destroy cluster` can find the provider. It is written conditionally (`pkg/types/clustermetadata.go:89`); `platform: none` continues to write nothing.
-
-Whether this is the right long-term shape — paths on a local filesystem versus an image reference, a CRD bundle, or a user-supplied manifest in the style of a cloud controller manager override — is an open question below. The pilot used paths because they are the smallest thing that proves the mechanism.
-
-#### Implemented shape: a provider payload image
-
-**Implemented and validated end to end.** The proposed form is a single
-provider-published OCI payload image, extracted by the installer into one standard
-directory with every other path defaulted beneath it. The pilot's loose filesystem paths
-are the other mode of the same union, kept as scaffolding and recorded under
-*Alternatives*. This is the fragment in *Workflow Description*. An AWS/CAPA cluster has
-been installed from a payload image and destroyed — see *Test Plan* for the run.
-
-Citations in this subsection are to branch `platform-external-capi` on top of commit
-`17ba290f47`. The payload work is in the working tree and is not yet committed, so a
-reviewer reading the branch at that commit will not find it; it lands as the PR series
-this enhancement describes.
-
-```go
-// pkg/types/external/platform.go:62 -- abridged; the local-path fields above are
-// unchanged and are rejected in image mode rather than ignored.
-type ClusterAPIProvider struct {
     Name string `json:"name"`
 
-    // Controller selects where the provider comes from. Unset, or "local",
-    // is exactly the pilot behaviour.
+    // Controller selects where the provider comes from.
     Controller *Controller `json:"controller,omitempty"` // :114
 
-    // CapiInstallerPath is the extraction root, relative to the install
-    // directory and required to stay inside it. Defaults to "capi-installer".
+    // CapiInstallerPath is the payload extraction root, relative to the
+    // install directory and required to stay inside it. Defaults to
+    // "capi-installer". Every path below defaults beneath it, so a conforming
+    // payload needs no path configuration at all.
     CapiInstallerPath string `json:"capiInstallerPath,omitempty"` // :122
 
     // Both default to what the payload's own layout declares, and an override
     // selects between things the payload shipped -- it cannot reach outside
     // the extraction root.
-    CustomResource string `json:"customResource,omitempty"`
-    ManifestPath   string `json:"manifestPath,omitempty"`
+    CustomResource string `json:"customResource,omitempty"` // :132
+    ManifestPath   string `json:"manifestPath,omitempty"`   // :143
 
     // Variables are values for the ${VAR} tokens in the payload's template
     // trees. Names beginning with "INSTALLER_" are reserved to the installer
-    // and rejected here. These are recorded in the install log, so a
+    // and rejected here. Their names are recorded in the install log, so a
     // credential does not belong in one.
     Variables map[string]string `json:"variables,omitempty"` // :161
 
-    // Defaulted per phase from the payload layout; set a phase to override
-    // that phase and only that phase.
-    Hooks *Hooks `json:"hooks,omitempty"`
+    // Defaulted per phase from the payload layout; set a phase here to
+    // override that phase and only that phase.
+    Hooks *Hooks `json:"hooks,omitempty"` // :100
+
+    // BinaryPath and ComponentsPath are the local-path mode and are rejected
+    // in image mode rather than ignored. See Alternatives.
+    BinaryPath     string `json:"binaryPath,omitempty"`     // :76
+    ComponentsPath string `json:"componentsPath,omitempty"` // :85
+    Args           []string `json:"args,omitempty"`         // :96
 }
 
 // pkg/types/external/platform.go:185
 type Controller struct {
-    // +kubebuilder:validation:Enum=image
-    // +kubebuilder:default:="image"
-    SourceType ControllerSourceType `json:"sourceType,omitempty"`
+    // The default is "local", not "image". That is backward compatibility
+    // with an install-config written against the pilot, not a preference:
+    // the proposed form is "image" and it is what partner-facing material
+    // documents. If the local mode is removed before GA -- Open Question 1 --
+    // the default becomes "image" and the enum loses a member.
+    // +kubebuilder:validation:Enum=local;image
+    // +kubebuilder:default:="local"
+    SourceType ControllerSourceType `json:"sourceType,omitempty"` // :192
 
-    Image string   `json:"image,omitempty"` // required when "image"
-    Path  string   `json:"path,omitempty"`  // grouped spelling of binaryPath
-    Args  []string `json:"args,omitempty"`
+    Image string   `json:"image,omitempty"` // :206, required when "image"
+    Path  string   `json:"path,omitempty"`  // :212, grouped spelling of binaryPath
+    Args  []string `json:"args,omitempty"`  // :218
+}
+
+// pkg/types/external/platform.go:260
+type Hooks struct {
+    InfraReady    *Hook `json:"infraReady,omitempty"`    // :267
+    PostProvision *Hook `json:"postProvision,omitempty"` // :282
+    PreDestroy    *Hook `json:"preDestroy,omitempty"`    // :294
+}
+
+// pkg/types/external/platform.go:313
+type Hook struct {
+    Program string   `json:"program"`        // :319
+    Args    []string `json:"args,omitempty"` // :332
 }
 ```
+
+**This is install-config only, in both modes.** It is not a cluster API: it is not served
+by the API server, it is not persisted into the cluster, and it has no CRD, webhook,
+aggregated apiserver or finalizer. Validation is ordinary install-config validation
+returning a `field.ErrorList` (`pkg/types/external/validation/platform.go`). Moving to a
+payload image does not change that — the image is pulled and extracted by the installer
+process and nothing about the payload reaches the cluster's API.
+
+The agent-based installer shares the install-config format but routes data through assisted-service's cluster manifests, and this field is not passed through. Per the install-config conventions, agent-based validation **warns** when the field is set to a non-default value rather than ignoring it silently.
+
+`ClusterPlatformMetadata` gains an `External` member (`pkg/types/clustermetadata.go:46`) so `destroy cluster` can find the provider. It is written conditionally (`pkg/types/clustermetadata.go:89`); `platform: none` continues to write nothing. In image mode it also carries the resolved payload digest, which is what lets `destroy cluster` run without contacting a registry.
 
 The payload declares its own layout in `openshift.yaml` at its root
 (`pkg/infrastructure/external/payload/descriptor.go:37`), carrying the Kubernetes
@@ -757,7 +762,7 @@ control plane, while `manifestTemplates` (`:86`) renders into
 `<install-dir>/external-install/extra-manifests/` and reaches the installed cluster. They
 share nothing but the rendering step, so collapsing them into one directory would make a
 payload unable to say which of its objects outlive the install
-(`pkg/infrastructure/external/payload/resolve.go:349`).
+(`pkg/infrastructure/external/payload/resolve.go:382`).
 
 Five things the implementation settled that the sketch did not say:
 
@@ -770,7 +775,7 @@ Five things the implementation settled that the sketch did not say:
   the payload.
 * **The installer's variable set is small and fixed:** `INSTALLER_INFRA_ID`,
   `INSTALLER_CLUSTER_NAME`, `INSTALLER_BASE_DOMAIN`, `INSTALLER_CLUSTER_DOMAIN` and
-  `INSTALLER_PUBLISH` (`resolve.go:378`). It is only what the installer knows without
+  `INSTALLER_PUBLISH` (`resolve.go:411`). It is only what the installer knows without
   knowing the provider's cloud. Adding a variable is compatible; renaming one is not. Only
   the names are logged, never the values.
 * **Hooks are never rendered.** The layout names a program and nothing else, so a payload
@@ -789,15 +794,16 @@ One pull per install, pinned: the resolution is cached per process and recorded 
 `.openshift_install_payload.json` in the install directory, so `create manifests` and
 `create cluster` are two processes and one payload, a floating tag cannot resolve twice to
 two different images inside one install, and `destroy cluster` needs no registry at all
-(`resolve.go:287`). The resolved digest and the extracted tree are logged by path and
+(`resolve.go:135`). The resolved digest and the extracted tree are logged by path and
 checksum, and the digest is recorded in `metadata.json` whether the process that wrote it
 pulled the payload or reused an earlier command's extraction — which is the usual case,
 since the command that writes the surviving metadata is the second one.
 
-This remains install-config only — it adds no cluster-serving API and does not change the
-`api-approvers: None` position below. It does enlarge the installer's responsibilities
-materially: pulling and extracting an image, rendering two template trees, and validating a
-declared payload layout are three things the pilot did not do.
+This remains install-config only — it adds no cluster-serving API, and the API approval
+named in the frontmatter is for the feature gate, not for these fields. It does enlarge
+the installer's responsibilities materially: pulling and extracting an image, rendering two
+template trees, and validating a declared payload layout are three things the pilot did
+not do.
 
 **Pulling is delegated to `oc image extract`, not to a vendored registry client.** The
 first implementation used `go-containerregistry` and cost 22,861 vendored lines across
@@ -835,8 +841,9 @@ arrived, not a guard on what is written — which is still more than the install
 #### No cluster API change is proposed, and why
 
 **This enhancement proposes no change to the [Infrastructure][infra-api] config API, or to
-any other cluster-serving API.** `api-approvers: None` in the frontmatter is deliberate and
-accurate. The reason is the ordinary API-review test: a status field exists so that a
+any other cluster-serving API.** The api-approver named in the frontmatter is there for the
+feature gate this ships behind — an `openshift/api` change — and for nothing else; no
+`Infrastructure` field is proposed. The reason is the ordinary API-review test: a status field exists so that a
 *controller* can act on it, and today nothing in the cluster would read one. Everything the
 install produces is consumed by the installer itself — the provider name reaches
 `destroy cluster` through `metadata.json`
@@ -960,9 +967,68 @@ Not applicable. MicroShift does not use `openshift-install`. Single-node OpenShi
 
 Not applicable. This changes the installer and adds no cluster-side component, so there is nothing whose presence or absence differs between OKE and OpenShift Container Platform. A cluster installed this way is subject to whatever OKE restrictions already apply to `platform: external`.
 
+### What the pilot proved, and where the proposal departs from it
+
+This enhancement is not a design on paper. It is the written-up result of a pilot that
+installed and destroyed OpenShift clusters on two clouds, and the proposal differs from
+what the pilot built in three specific places. Both halves matter to a reviewer: the
+evidence is what makes the mechanism credible, and the departures are what is actually
+being asked for.
+
+**What the pilot built and ran.** A working `platform: external` install driven by a
+Cluster API provider the installer does not embed. The provider arrived as loose files on
+the installer host — a controller binary and a components bundle named by path in
+`install-config.yaml` — and the installer started it against its own local, ephemeral
+Cluster API control plane. Two providers were exercised: AWS with CAPA as the convenient
+reference arm, and OCI with CAPOCI as the arm that evidences the central claim, because
+CAPOCI cannot be embedded. Clusters were created and destroyed on both.
+
+**What that established, and which the proposal inherits unchanged.** None of these are
+mode-specific; the payload form changes how the provider is delivered, not any of them.
+
+* The installer can run a provider it does not ship, against its own control plane, and
+  reach `Install complete!` on a platform with no in-tree support.
+* The installer holds no cloud credentials on `platform: external` and must not acquire
+  any. This is why hooks exist at all.
+* The three hook phases are the right three, and `infraReady` is not optional: without
+  something publishing `api-int`, bootkube fails and the install dies far from the cause.
+* Hooks receive paths, not documents, because passing a kubeconfig or an ignition body
+  through the environment puts secrets into process listings and traces.
+* A wrapper script in place of the provider binary is legal and necessary — it is how
+  CAPOCI's one undeclared flag was reconciled without a per-platform code path.
+* Teardown must be verified on a *second* cluster. Three teardown defects were found only
+  by creating a cluster after a previous one had been destroyed.
+* Three shared-code touches — manifest handling, artifact resolution, the platform switch
+  — are the full blast radius on integrated platforms.
+
+**Where the proposal departs.** The pilot answered "can the installer run a provider it
+does not embed?" and deliberately left every *delivery* question open. Those are what the
+proposal closes:
+
+1. **Delivery becomes an OCI payload image**, not host-local paths. Paths have no
+   publication story, no immutable identity, no pull authentication, no mirroring and no
+   way to version the binary, components, templates and hooks as one thing. An image has
+   all of those already, through `pullSecret` and `imageDigestSources`. The pilot's form
+   survives as developer and CI scaffolding only — see *Alternatives* — and Open Question 1
+   is whether it survives at all.
+2. **The payload describes itself.** `openshift.yaml` declares the layout, so the cluster
+   creator wires nothing: every path defaults beneath the extraction root, hooks default
+   per phase from the layout, and validation is exhaustive — including rejecting an
+   executable the payload did not declare. In the pilot the creator named each path by
+   hand and an undeclared program was simply a program.
+3. **Day-0 manifests and Cluster API templates travel with the provider**, rendered by the
+   installer with clusterctl substitution, as two separate trees because they have
+   different destinations and different lifetimes. The pilot had the creator supply both
+   by hand, which made it possible to ship a provider that could not actually bring up a
+   cluster without out-of-band instructions.
+
+Everything else — the hook contract, the `OPENSHIFT_INSTALL_*` environment, the
+single-object extra-manifest rule, the architecture check, logging artifacts by path and
+checksum rather than content — carries over as it was proved.
+
 ### Implementation Details/Notes/Constraints
 
-File locations on the pilot branch `pilot-platform-external-capi` at commit `c103ca8c90`:
+Proposed file locations in `openshift/installer`:
 
 | Area | Location |
 | --- | --- |
@@ -974,9 +1040,8 @@ File locations on the pilot branch `pilot-platform-external-capi` at commit `c10
 | Teardown | `pkg/destroy/external/` |
 | Platform routing | `pkg/infrastructure/platform/platform.go:59` |
 
-The payload-image mode adds one package, `pkg/infrastructure/external/payload/`, on branch
-`platform-external-capi` on top of `17ba290f47` and not yet committed: descriptor and
-layout validation, the registry pull and extraction, template rendering, and the single
+The payload-image mode adds one package, `pkg/infrastructure/external/payload/`: descriptor
+and layout validation, the registry pull and extraction, template rendering, and the single
 resolver every other stage calls. Nothing outside that package reads a descriptor,
 resolves a layout path or renders a template, so the payload contract has exactly one
 implementation. It is entered from `pkg/asset/manifests/openshift.go:324`, during
@@ -1253,8 +1318,8 @@ fails loudly.
 
 **The third arm is the only one that constitutes evidence for this enhancement's central claim**, and reviewers should hold it to that standard. The installer embeds CAPA, so an AWS run cannot distinguish "ran the binary it was handed" from "ran the binary it already had". A provider that cannot be embedded can. The AWS arms test the ergonomics of the mechanism; they do not test the mechanism. Building the payload's CAPA binary from provider source at a pinned ref narrows the gap but does not close it.
 
-**Evidence to date for the payload-image mode.** One AWS/CAPA cluster, pilot run
-`mrb-ext15`, installed from a payload image on a local registry and reached
+**Evidence to date for the payload-image mode.** One AWS/CAPA cluster, installed from a
+payload image on a local registry, reached
 `Install complete!` in 38m20s with no `level=error` or `level=fatal` in the install log.
 OpenShift `5.1.0-ec.1`; every cluster operator `Available=True`, `Progressing=False`,
 `Degraded=False`; three nodes `Ready`. The log records the tag resolving to a digest, one
@@ -1369,8 +1434,8 @@ This holds only because no change to the `Infrastructure` config API is proposed
 reasoning, the `cloudControllerManager.state` precedent it would follow, and the
 immutability constraint that makes the CCM shape unsafe to copy are in
 *API Extensions → No cluster API change is proposed, and why*. If a later revision adds an
-`Infrastructure` status field, this section and `api-approvers: None` both become wrong and
-must change together.
+`Infrastructure` status field, this section becomes wrong and the api-approver's remit
+widens from the feature gate to the config API; the two must change together.
 
 Consequently there is no steady-state CPU, memory or API-call impact on an installed
 cluster, no new failure mode for the cluster's API server, and no SLO to state for cluster
