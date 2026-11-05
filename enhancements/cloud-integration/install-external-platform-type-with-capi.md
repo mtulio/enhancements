@@ -48,9 +48,10 @@ filesystem paths on the installer host — which is implemented and retained
 as developer and CI scaffolding, but is not proposed as a partner-facing
 form; it is recorded under Alternatives.
 The installer's existing local, ephemeral Cluster API control plane runs
-them exactly as it runs the providers it embeds. Three optional user-supplied hooks
-cover the cloud-specific work the installer cannot do, because on
-`platform: external` it holds no cloud credentials by design.
+them exactly as it runs the providers it embeds. Three lifecycle hooks, declared
+by the payload rather than by the cluster creator, cover the cloud-specific work
+the installer cannot do, because on `platform: external` it holds no cloud
+credentials by design.
 
 The design is deliberately provider-agnostic: there is no Provider-specific
 (AWS-specific, OCI-specific, etc) code path. It has been exercised end to
@@ -132,7 +133,10 @@ This enhancement adds, for `platform: external` only:
    before any side effect.
 3. Acceptance of Cluster API manifests whose `kind` has no compiled-in Go type, scoped to
    the external provisioning path.
-4. An optional `hooks` stanza with three lifecycle points — `infraReady`, `postProvision`,  `preDestroy` — for cloud-specific work the installer cannot perform.
+4. Three lifecycle points — `infraReady`, `postProvision`, `preDestroy` — at which the
+   installer runs a program the provider payload declares, for cloud-specific work the
+   installer cannot perform. These are declared in the payload's own descriptor, not in
+   `install-config.yaml`: a hook is an integrator's interface, not a cluster creator's.
 5. Recording of the provider in cluster metadata, so `destroy cluster` can tear down
    through the same provider.
 6. A hidden `openshift-install extract cluster-api <provider>` command that writes an
@@ -193,8 +197,12 @@ Provider preparation, done once by the **partner provider developer**:
 apiVersion: external.openshift.io/v1alpha1
 kind: ProviderPayload
 
-# Compared against the Kubernetes version of the release payload being
-# installed. Outside this range the install is refused, before any cloud call.
+# Compared against the Kubernetes version this installer binary was built
+# against. Outside this range the install is refused, before any cloud call.
+# Not the release image's Kubernetes version: the installer does not read one
+# out of the release, and with OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE the
+# two can differ. Reading it from the release instead is a design question,
+# not a detail -- see Open Question 14.
 #
 # Only 1.36 (OpenShift 5.1) is exercised in CI today. The wider band below
 # illustrates the shape of the contract; it is not a tested claim, and a
@@ -322,61 +330,40 @@ Install time, done by the **cluster creator**:
       cloudControllerManager: External
       clusterAPI:
         name: foo
-        # Directory of the root where the CAPI assets will be extracted to be consumed by installer.
-        # Default: <install-dir>/capi-installer
-        # The directory will have:
-        # bin/controller
-        # crd/infrastructure.yaml
-        # hooks/infraReady-*
-        # hooks/postProvision-*
-        # hooks/preDestroy-*
-        capiInstallerPath: <install-dir>/capi-installer
 
-        # controller source: image or local
-        # Can be: image or local
-        # when image it's expected all resources be inside the image.
+        # Where the provider comes from. A discriminated union: exactly one of
+        # the members below is set, and sourceType names which.
         controller:
-          # image or local
-          sourceType: image
-          # OCI image or local path
-          # When imagem resources will be extracted to capiInstallerPath
-          image: quay.io/foo/openshift-capfoo:latest
-          args: []
+          sourceType: Image
+          image:
+            ref: quay.io/foo/openshift-capfoo@sha256:CHANGE-ME
 
-        # Single bundle manifest the local control plane loads. Decided: a single
-        # file, not a directory -- every clusterctl provider already publishes
-        # exactly one infrastructure-components.yaml.
-        # When using the image it must be in the root.
-        customResource: <install-dir>/capi-installer/infrastructure-components.yaml
+        # Extra flags appended to the controller's command line, whichever
+        # source it came from.
+        args: []
 
-        # Additional manifests directory that will be
-        # automatically copyed to the installer manifest directory to rendered on boot.
-        # Rendered with clusterctl's substitution -- ${VAR}, ${VAR=default},
-        # ${VAR:="default"} -- over INSTALLER_-prefixed variables. An
-        # unresolvable variable is a validation error, not a pass-through.
-        manifestPath: <install-dir>/capi-installer/manifests
-
-        # Values for the provider's own ${VAR} tokens. INSTALLER_-prefixed
-        # names are reserved to the installer and rejected here. Recorded in
-        # the install log, so not a place for a credential.
+        # Values for the provider's own ${VAR} tokens in the payload's template
+        # trees. This is the cluster creator's customisation interface, and the
+        # only part of the stanza a conforming payload requires them to write.
+        # INSTALLER_-prefixed names are reserved to the installer and rejected
+        # here. Variable names are recorded in the install log.
         variables:
           FOO_REGION: us-east-1
 
-        # hooks is automatically filled per phase from the payload's layout.
-        # Setting a phase here overrides that phase and only that phase; the
-        # others keep running from the payload.
-        #> TBD/Q: it seems very tied to the provider specific things, and not install-api. I am ok to remove this letting it to the payload.yaml
-        hooks:
-          infraReady:
-            program: <install-dir>/capi-installer/hooks/infraReady
-            args: []
-          postProvision:
-            program: <install-dir>/capi-installer/hooks/postProvision
-            args: []
-          preDestroy:
-            program: <install-dir>/capi-installer/hooks/preDestroy
-            args: []
-
+        # Everything below is optional and shown only to say what it means. A
+        # conforming payload needs none of it.
+        #
+        # Paths are relative, never absolute: capiInstallerPath is relative to
+        # the install directory and must stay inside it, and the two below are
+        # relative to the extraction root, so an override selects between
+        # things the payload shipped rather than reaching outside it.
+        #
+        # capiInstallerPath: capi-installer       # default
+        # customResource: infrastructure-components.yaml
+        # manifestPath: manifests
+        #
+        # There is no hooks stanza. Hooks are declared by the payload, in
+        # openshift.yaml -- see "Hooks are the integrator's interface" below.
   ```
 
   **How the payload is obtained and used.** In order:
@@ -433,9 +420,10 @@ Install time, done by the **cluster creator**:
   # <capiInstallerPath>/openshift.yaml
   apiVersion: external.openshift.io/v1alpha1
   kind: ProviderPayload
-  # Compared against the Kubernetes version of the release payload being installed;
-  # the install is refused outside the range. The Cluster API contract comes from
-  # the adjacent clusterctl metadata.yaml and is not repeated here.
+  # Compared against the Kubernetes version the installer was built against; the
+  # install is refused outside the range. The Cluster API contract comes from the
+  # adjacent clusterctl metadata.yaml and is not repeated here -- and is not
+  # checked today; see Version Skew Strategy.
   compatibility:
     kubernetes:
       min: "1.32"
@@ -483,13 +471,14 @@ Install time, done by the **cluster creator**:
       clusterAPI:
         name: aws
         controller:
-          sourceType: image
-          image: quay.io/CHANGE-ME/openshift-capa@sha256:CHANGE-ME
-          # the feature gate CAPA requires before it will accept
-          # AWSMachine.spec.ignition at all -- a provider-specific flag the
-          # installer knows nothing about
-          args:
-          - --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true
+          sourceType: Image
+          image:
+            ref: quay.io/CHANGE-ME/openshift-capa@sha256:CHANGE-ME
+        # the feature gate CAPA requires before it will accept
+        # AWSMachine.spec.ignition at all -- a provider-specific flag the
+        # installer knows nothing about
+        args:
+        - --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true
         variables:
           AWS_REGION: CHANGE-ME
           AWS_DNS_ZONE: CHANGE-ME
@@ -506,10 +495,11 @@ Install time, done by the **cluster creator**:
       clusterAPI:
         name: oci
         controller:
-          sourceType: image
-          image: quay.io/CHANGE-ME/openshift-capoci@sha256:CHANGE-ME
-          args:
-          - --init-oci-clients-on-startup=false
+          sourceType: Image
+          image:
+            ref: quay.io/CHANGE-ME/openshift-capoci@sha256:CHANGE-ME
+        args:
+        - --init-oci-clients-on-startup=false
         variables:
           OCI_COMPARTMENT_ID: CHANGE-ME
           OCI_REGION: CHANGE-ME
@@ -564,17 +554,23 @@ Install time, done by the **cluster creator**:
 
   **Decided on the payload image:**
 
-  * **`controller.sourceType` is a union.** Exactly one of `image` or `local`. When
-    `image` is set, every artifact comes from the payload; local paths are not consulted.
-    The proposed form and the pilot's local form are therefore two modes of one field
-    set, not two field sets — which is what makes it cheap to keep `local` as developer
-    scaffolding without it becoming a second partner-facing contract.
+  * **`controller` is a discriminated union, spelled the way the API conventions spell
+    one.** `sourceType` is a required discriminator with PascalCase values `Image` and
+    `Local`, and each names a pointer-to-struct member carrying only that mode's fields.
+    The proposed form and the pilot's local form are therefore two members of one union,
+    not two overlapping field sets — which is what makes it cheap to keep `Local` as
+    developer scaffolding without it becoming a second partner-facing contract. See
+    *API Extensions* for the shape and for what this replaces.
   * **`customResource` is a single file.** `customResourcePath` is dropped. Cluster API
     providers publish exactly one `infrastructure-components.yaml`; a directory contract
     would be a generalisation with no known consumer.
-  * **An unresolvable template token fails, at validation.** Before any cloud call and
-    before the controller starts, consistent with how every other install-config error
-    surfaces, and with clusterctl's own behaviour on an unset required variable.
+  * **An unresolvable template token fails the install.** It fails when the payload's
+    templates are rendered, during `create manifests` — before any cloud call and before
+    the controller starts, matching clusterctl's behaviour on an unset required variable.
+    It is **not** an install-config validation error: the token lives in the payload, not
+    in `install-config.yaml`, so there is no field path to attach it to and it cannot be
+    reported as a `field.ErrorList` entry alongside the rest. Partners and cluster
+    creators should expect it from `create manifests`, not from `create install-config`.
   * **Credentials for a private payload are the user's problem, not a new mechanism.**
     The user appends the partner's registry credentials to the existing `pullSecret`, or
     mirrors the payload into a registry they already have credentials for and redirects it
@@ -583,19 +579,21 @@ Install time, done by the **cluster creator**:
     file rather than letting `oc` fall back to the host's ambient docker or containers
     auth, so the same install-config pulls the same image on another machine.
   * **A tag is accepted; the reference must be fully qualified.** Starting with tags keeps the first implementation simple. The install log records the resolved digest and the artifact SHA-256, so a tagged install is still traceable after the fact even though it is not reproducible from the install-config alone.
-  * **A hook may be overridden per phase, and the root follows the origin.** This was
-    decided the other way first — "no host-local hook in image mode, the payload is one
-    unit of trust" — and reversed on implementation, because the single-root rule it
-    implied broke the ordinary case: overriding one phase relocated all three, so a payload
-    that declared `infraReady` and a user who replaced `postProvision` produced an install
-    that looked for the payload's own program in the External manifest directory and failed
-    on a hook nothing was wrong with. What ships instead is per phase: an overridden
-    program resolves against the External manifest directory, a payload-declared one
-    against the extraction root, and the two coexist. Containment
-    (`pkg/types/external/validation/platform.go:268`) still applies to both, against
-    whichever root that hook belongs to. The payload is still the unit of trust for
-    everything it supplies; it is not a unit of trust for a program the user wrote and
-    named themselves.
+  * **Hooks are the integrator's interface, and the payload is their only home.** A hook
+    is provider-specific work — DNS, an extra load-balancer listener, ignition staging —
+    that the partner who wrote the provider is the only party able to write correctly. It
+    is not a knob a cluster creator turns. So `install-config.yaml` has no `hooks` stanza
+    at all: the payload declares each phase in `openshift.yaml` and the installer runs
+    what it declares, resolved against the extraction root and required to stay inside it.
+    `variables` is the cluster creator's interface and `openshift.yaml` is the
+    integrator's, and the two do not overlap.
+
+    An earlier design let a cluster creator override a phase with a host-local program.
+    That is dropped. It bought a developer convenience and cost a second resolution root,
+    a per-phase origin rule, and a mixed trust boundary in which the payload was the unit
+    of trust for some hooks and not others — and the first implementation of it was
+    already wrong, relocating all three hooks when one was overridden. Developers
+    iterating on a hook use `sourceType: Local`, which is what that mode is for.
   * **A payload hook must default its own arguments.** The layout names a program and
     nothing else, so there is nowhere in the payload for a hook to carry an argument list.
     A partner moving a hook from the local-path form to a payload has to fold its flags
@@ -657,7 +655,7 @@ Teardown:
 
 1. `openshift-install destroy cluster` reads the provider from cluster metadata.
 2. The `preDestroy` hook runs.
-3. The provider is restarted locally, its credential Secret re-applied, and the infrastructure custom resources are deleted so the provider's finalizers can run.
+3. The provider is restarted locally and the infrastructure custom resources are deleted so the provider's finalizers can run. The restarted controller reaches the cloud the same way it did during the install — through the environment of the `openshift-install` process — so `destroy cluster` must be run with the same cloud credentials in the environment as `create cluster` was.
 
 #### Variation: platforms that cannot carry the bootstrap ignition in instance metadata
 
@@ -672,75 +670,127 @@ Whether the installer should offer a first-class mechanism is an open question b
 One new optional field on an existing platform stanza, `platform.external.clusterAPI`, of
 type `*ClusterAPIProvider` (`pkg/types/external/platform.go:39`). `platform: external`
 already exists and is unchanged otherwise. The proposed shape is below; the loose
-filesystem paths the pilot used are the same field set in its other mode, and are recorded
-under *Alternatives*.
+filesystem paths the pilot used are the union's other member, and are recorded under
+*Alternatives*.
 
 ```go
-// pkg/types/external/platform.go:62
+// pkg/types/external/platform.go
 type ClusterAPIProvider struct {
+    // Name is the provider's short name, recorded in cluster metadata so that
+    // destroy cluster can tear down through the same provider.
+    // +required
     Name string `json:"name"`
 
-    // Controller selects where the provider comes from.
-    Controller *Controller `json:"controller,omitempty"` // :114
+    // Controller says where the provider comes from.
+    // +required
+    Controller ProviderController `json:"controller"`
+
+    // Args are extra flags appended to the controller's command line,
+    // independent of which source it came from. A provider's own flags are
+    // the partner's business and the installer does not interpret them; it
+    // supplies --health-addr and a kubeconfig of its own, and appends these.
+    // +optional
+    Args []string `json:"args,omitempty"`
+
+    // Variables are values for the ${VAR} tokens in the payload's template
+    // trees, and are the cluster creator's customisation interface. Names
+    // beginning with "INSTALLER_" are reserved to the installer and rejected
+    // here. Names are recorded in the install log; values are not.
+    // +optional
+    Variables map[string]string `json:"variables,omitempty"`
 
     // CapiInstallerPath is the payload extraction root, relative to the
     // install directory and required to stay inside it. Defaults to
-    // "capi-installer". Every path below defaults beneath it, so a conforming
-    // payload needs no path configuration at all.
-    CapiInstallerPath string `json:"capiInstallerPath,omitempty"` // :122
-
-    // Both default to what the payload's own layout declares, and an override
-    // selects between things the payload shipped -- it cannot reach outside
-    // the extraction root.
-    CustomResource string `json:"customResource,omitempty"` // :132
-    ManifestPath   string `json:"manifestPath,omitempty"`   // :143
-
-    // Variables are values for the ${VAR} tokens in the payload's template
-    // trees. Names beginning with "INSTALLER_" are reserved to the installer
-    // and rejected here. Their names are recorded in the install log, so a
-    // credential does not belong in one.
-    Variables map[string]string `json:"variables,omitempty"` // :161
-
-    // Defaulted per phase from the payload layout; set a phase here to
-    // override that phase and only that phase.
-    Hooks *Hooks `json:"hooks,omitempty"` // :100
-
-    // BinaryPath and ComponentsPath are the local-path mode and are rejected
-    // in image mode rather than ignored. See Alternatives.
-    BinaryPath     string `json:"binaryPath,omitempty"`     // :76
-    ComponentsPath string `json:"componentsPath,omitempty"` // :85
-    Args           []string `json:"args,omitempty"`         // :96
+    // "capi-installer". The two paths below are relative to that root and
+    // default to what the payload's own layout declares, so an override
+    // selects between things the payload shipped and cannot reach outside it.
+    // A conforming payload needs none of the three.
+    // +optional
+    CapiInstallerPath string `json:"capiInstallerPath,omitempty"`
+    // +optional
+    CustomResource string `json:"customResource,omitempty"`
+    // +optional
+    ManifestPath string `json:"manifestPath,omitempty"`
 }
 
-// pkg/types/external/platform.go:185
-type Controller struct {
-    // The default is "local", not "image". That is backward compatibility
-    // with an install-config written against the pilot, not a preference:
-    // the proposed form is "image" and it is what partner-facing material
-    // documents. If the local mode is removed before GA -- Open Question 1 --
-    // the default becomes "image" and the enum loses a member.
-    // +kubebuilder:validation:Enum=local;image
-    // +kubebuilder:default:="local"
-    SourceType ControllerSourceType `json:"sourceType,omitempty"` // :192
+// ProviderController is a discriminated union over the ways a provider can be
+// supplied.
+// +union
+type ProviderController struct {
+    // SourceType is the discriminator. It is required and has no default:
+    // nothing has shipped, so there is no install-config to stay compatible
+    // with, and a defaulted discriminator would mean an empty controller
+    // stanza silently selecting a mode.
+    // +unionDiscriminator
+    // +kubebuilder:validation:Enum=Image;Local
+    // +required
+    SourceType ProviderSourceType `json:"sourceType"`
 
-    Image string   `json:"image,omitempty"` // :206, required when "image"
-    Path  string   `json:"path,omitempty"`  // :212, grouped spelling of binaryPath
-    Args  []string `json:"args,omitempty"`  // :218
+    // Image is the proposed form: one OCI image carrying every artifact.
+    // +optional
+    Image *ImageSource `json:"image,omitempty"`
+
+    // Local is the developer and CI form, not documented to partners. See
+    // Alternatives, and Open Question 1 on whether it survives to GA.
+    // +optional
+    Local *LocalSource `json:"local,omitempty"`
 }
 
-// pkg/types/external/platform.go:260
-type Hooks struct {
-    InfraReady    *Hook `json:"infraReady,omitempty"`    // :267
-    PostProvision *Hook `json:"postProvision,omitempty"` // :282
-    PreDestroy    *Hook `json:"preDestroy,omitempty"`    // :294
+type ImageSource struct {
+    // Ref is a fully qualified image reference. A digest is required for a
+    // mirrored or disconnected install and accepted everywhere; a tag is
+    // accepted for a connected install.
+    // +required
+    Ref string `json:"ref"`
 }
 
-// pkg/types/external/platform.go:313
-type Hook struct {
-    Program string   `json:"program"`        // :319
-    Args    []string `json:"args,omitempty"` // :332
+type LocalSource struct {
+    // Path is a directory on the installer host laid out as a payload root:
+    // an openshift.yaml and the artifacts it declares. It is the extracted
+    // form of what an image carries, so the two members differ only in how
+    // the bits arrive and share every rule about what they contain.
+    // +required
+    Path string `json:"path"`
 }
 ```
+
+**What this shape replaces, and why the change is worth making before anything ships.**
+The pilot grew these fields one at a time and ended with three ways to say the same
+thing — `binaryPath` and `controller.path`; `args` on the provider and `args` on the
+controller — with `sourceType` an optional lowercase enum defaulted to `local`, the two
+modes' fields interleaved in one flat struct, a `hooks` stanza duplicating what the
+payload already declares, and at-most-one-of enforced by hand in validation. That is a
+union in behaviour without being one in shape, and it is exactly
+the arrangement [`dev-guide/api-conventions.md`][api-conventions] exists to prevent:
+members must be pointers to structs, must be optional, the discriminator should be
+required, and its values should be PascalCase matching a member's json tag. The version
+above satisfies all four, deletes the duplicate spellings, and makes "which mode is this"
+answerable from the document rather than from the validation code.
+
+The `Local` member shrinks to a single path for the same reason. In the pilot it was two
+unrelated paths — a binary and a components bundle — because the pilot had no descriptor
+to hold a layout. Now that `openshift.yaml` exists, the honest description of the local
+mode is "a payload root that is already extracted", and saying it that way means one
+layout, one validation path and one set of rules across both members rather than two.
+An image is then nothing more than a transport for a directory. This also answers where
+hooks come from in local mode: from the same `openshift.yaml`, because there is only one.
+
+`install-config.yaml` is not served by an API server and does not go through OpenShift API
+review, so none of this is mandatory. It is still worth doing: install-config fields are
+effectively permanent — the conventions in `pkg/types` forbid removing or renaming one —
+so a shape chosen now is a shape supported indefinitely. The cost of fixing it is zero
+today and unbounded after the first release.
+
+[api-conventions]: https://github.com/openshift/enhancements/blob/master/dev-guide/api-conventions.md#unions
+
+**There is no `hooks` field.** The pilot had one, and it is removed rather than carried
+forward. A hook is a provider-specific program — it creates DNS records, adds a listener
+to a load balancer, stages ignition — written by the party that wrote the provider. A
+cluster creator cannot usefully author one and should not be offered the field. Hooks are
+declared only by the payload, in `openshift.yaml`, which is the integrator's interface in
+the same way `variables` is the cluster creator's. Dropping the field also removes a
+second hook-resolution root, a per-phase origin rule, and a trust boundary that ran
+through the middle of the hook set.
 
 **This is install-config only, in both modes.** It is not a cluster API: it is not served
 by the API server, it is not persisted into the cluster, and it has no CRD, webhook,
@@ -781,14 +831,15 @@ Five things the implementation settled that the sketch did not say:
 * **Hooks are never rendered.** The layout names a program and nothing else, so a payload
   hook has nowhere to carry arguments and must default its own. This is a real constraint
   on partners, discovered by writing one.
-* **Each hook's root follows that hook's origin.** A program the payload declared resolves
-  against the extraction directory; one the install-config names resolves against the
-  External manifest directory. Overriding one phase therefore leaves the other two running
-  from the payload. An earlier implementation moved all three roots together, which made
-  overriding `postProvision` alone break a perfectly good `infraReady`.
-* **A phase that neither the payload nor the install-config names is skipped**, with the
-  existing warning naming the consequence. Only `infraReady` has one worth stating: nothing
-  publishes `api-int`, and the install dies at the bootkube `resolve-api-int-url` stage.
+* **Every hook resolves against one root, the extraction directory, and must stay inside
+  it.** The pilot allowed a second root, for hooks the install-config named, and the
+  per-phase origin rule that came with it was implemented wrongly first — overriding
+  `postProvision` relocated `infraReady` too and broke an install on a hook nothing was
+  wrong with. Removing the install-config field removes the rule and the second root.
+* **A phase the payload does not declare is skipped**, with a warning naming the
+  consequence. Only `infraReady` has one worth stating: nothing publishes `api-int`, and
+  the install dies at the bootkube `resolve-api-int-url` stage about forty minutes later,
+  with an error that points nowhere near the cause.
 
 One pull per install, pinned: the resolution is cached per process and recorded in
 `.openshift_install_payload.json` in the install directory, so `create manifests` and
@@ -1053,7 +1104,8 @@ Constraints discovered by running it, not by design:
 * **Hook environment carries paths, not documents.** Passing a kubeconfig or an ignition body through an environment variable puts secrets into process listings and traces.
 * **`infraReady` cannot write into `<install-dir>/openshift/`.** By the time infrastructure is ready the installer has already consumed and removed that tree, so partner configuration Secrets must be applied from `postProvision` against the hook's kubeconfig. This is a measured finding, not a preference.
 * **A wrapper script is a legal `binaryPath`.** Cluster API providers do not agree on flag names — the installer passes `--health-addr` (`pkg/clusterapi/external.go:155`) and at least one real provider declares `--health-probe-bind-address` instead, with pflag exiting non-zero on an unknown flag. A shim that translates the flag is the supported answer today. Note that a shim must **translate**, not drop: the installer polls `/healthz` at exactly the address it passed.
-* **`destroy cluster` deliberately excludes Secrets from the saved Cluster API output**, so teardown must re-apply the provider's credential Secret before the infrastructure resource's finalizer can clear.
+* **`destroy cluster` deliberately excludes Secrets from the saved Cluster API output**, so nothing credential-bearing is written to the install directory for teardown to replay. The restarted provider therefore has to find its credentials the same way it did at install time — in the process environment — which is what makes teardown work without the installer ever holding a cloud credential, and what makes "run destroy from the same shell you ran create from" a requirement rather than a convention.
+* **The provider controller and the hook programs inherit the installer's process environment**, plus a small set of `OPENSHIFT_INSTALL_*` variables the installer adds, one of which is the path to the cluster-admin kubeconfig. This is the actual credential contract and it is worth stating plainly: the payload carries no credential, and it is handed every credential the `openshift-install` process can see. A narrower contract — an explicit allowlist of variables to forward — is possible and is not proposed here, because every pilot provider and every hook needed the cloud CLI configuration that only the ambient environment supplies.
 * **The architecture of the supplied binary is checked before use.** A cross-built
   controller fails at validation rather than at exec time.
 * **Artifacts are logged by path, source and SHA-256 — never by content.**
@@ -1084,6 +1136,20 @@ three-phase install, that URL grants unauthenticated read over every bootstrap s
 it during teardown; the reference example verifies the object and the pre-signed request
 are gone after destroy rather than assuming it. A first-class installer mechanism would
 remove the need for each partner to get this right independently — see Open Questions.
+
+**The `clusterAPI` stanza is persisted into the cluster, and nothing redacts it.** The
+installer writes a copy of the install-config to `kube-system/cluster-config-v1`, with
+`pullSecret` removed and a per-platform redaction applied — and that redaction currently
+has cases for vSphere and Nutanix only (`pkg/asset/manifests/operators.go:352`). Every
+field proposed here therefore lands in a ConfigMap readable by anything with cluster-wide
+read. Image references and paths are not sensitive. `variables` is: it is free-form
+`map[string]string` filled in by the cluster creator, and a partner can define any
+variable they like, including one whose value is a credential.
+*Mitigation:* `platform: external` needs its own case in that redaction, and the EP
+proposes adding one that drops `variables` entirely rather than attempting to classify
+individual keys. The documented rule — variable *names* are logged, values are not —
+should hold for the persisted copy too, and today it does not. This is the one finding
+here that is a live defect rather than a design choice.
 
 **Support attribution.** An install can now fail inside code Red Hat did not write.
 *Mitigation:* the provider name and artifact hashes are recorded in metadata and logs; see
@@ -1135,10 +1201,17 @@ here rather than in the Proposal because it is **not proposed as a partner-facin
 The detail below is kept in full so the pilot's evidence survives review rather than being
 re-derived.
 
-**What it is.** `controller.sourceType: local` with `binaryPath` and `componentsPath`
-pointing at a controller binary and a components bundle already present on the installer
-host. No image is pulled; everything else in the flow — validation, the local Cluster API
-control plane, the hooks, metadata, teardown — is identical.
+**What it is.** The provider's artifacts already present on the installer host, with no
+image pulled. Everything else in the flow — validation, the local Cluster API control
+plane, the hooks, metadata, teardown — is identical.
+
+**The fragments below are the pilot's, verbatim, not the proposed shape.** They are kept
+as run so the evidence is reviewable. Three differences from what *API Extensions*
+proposes are worth naming before reading them: the pilot's fields were flat rather than
+inside a `local` union member; the pilot named a binary and a components bundle
+separately, where the proposal names one already-extracted payload root; and the pilot's
+`hooks` stanza lived in `install-config.yaml`, where the proposal has the payload declare
+them in both modes. The pilot had no descriptor, which is why it needed all three.
 
 **Why the payload image is preferred.** Every objection below is about *delivery*, not
 about whether the mechanism works. That is precisely the point: local paths answered
@@ -1265,7 +1338,7 @@ provider.
 
 ## Open Questions [optional]
 
-1. **Is `controller.sourceType: local` removed from the tree before GA, or kept as developer and CI scaffolding?** The partner-facing question is **decided**: the payload image is the proposed form, and the local-path form is not documented to partners — see Alternatives. The payload layout, templating syntax, variable vocabulary, compatibility file and validation strictness are all settled too. What remains open is narrower and internal: keeping `local` costs a second code path and a second CI arm in perpetuity, and buys provider developers an iteration loop that does not require building and pushing an image per change. If it stays, it needs a stated support status so it is not mistaken for a partner contract.
+1. **Is `controller.sourceType: Local` removed from the tree before GA, or kept as developer and CI scaffolding?** The partner-facing question is **decided**: the payload image is the proposed form, and the local-path form is not documented to partners — see Alternatives. The payload layout, templating syntax, variable vocabulary, compatibility file and validation strictness are all settled too. What remains open is narrower and internal: keeping `Local` costs a second code path and a second CI arm in perpetuity, and buys provider developers an iteration loop that does not require building and pushing an image per change. If it stays, it needs a stated support status so it is not mistaken for a partner contract.
 2. **How is the scheme fallback for unknown kinds finally scoped?** Three candidates: restrict to `platform: external`, validate against the CRDs actually present in `componentsPath`, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.
 3. **Should the installer provide a first-class "bootstrap ignition is staged elsewhere, here is the pointer" mechanism?** Leaving it to each partner means each partner reimplements the same credential hazard.
 4. **Should `clusterAPI.args` be able to override an installer-supplied flag by name, rather than only append?** Today's answer is a per-partner wrapper script.
@@ -1290,6 +1363,48 @@ provider.
     * **Bootstrap ordering.** #2138 requires that bootstrap not depend on an in-cluster controller that needs the DNS being configured. On this path the endpoint is not known at `create cluster` time, so the installer would have to resolve policy up front and reconcile the address after `infraReady` — the same constraint their None SNO installer path carries, but with a later address.
     * **Sequencing.** #2138 is provisional, has no External owner, and leaves the acceptance component (CNO or cluster-config-operator) undecided. Nothing in this enhancement's Tech Preview criteria should depend on it. The question to settle before Tech Preview is narrower: whether the hook contract is designed as permanent, or as a bridge that a later shared-networking adoption is expected to replace for the DNS case.
     Answering this also decides whether the special-purpose hooks sketched earlier — a DNS creator, a load-balancer creator — are worth defining, or whether that work belongs in the shared contract.
+
+14. **Where does the `openshift.yaml` contract live, who owns its schema, and how does a
+    partner validate a payload before an install?** The descriptor is authored by a third
+    party and carries `apiVersion: external.openshift.io/v1alpha1` and
+    `kind: ProviderPayload`, so it looks like a Kubernetes API. Today it is none of the
+    things that implies: the only definition is a Go struct in the installer, parsed with
+    strict unmarshalling that rejects any other `apiVersion` outright, and there is no
+    published schema, no conversion, no owner of the `external.openshift.io` group and no
+    API review. A partner's first indication that their descriptor is wrong is an install
+    that fails. That is tolerable for Dev Preview and not for a contract partners build
+    release pipelines around. Four sub-questions, and they are not independent:
+    * **Installer-only, or `openshift/api`?** Installer-only keeps the type next to its
+      one consumer and skips API review, but it means the contract versions with the
+      installer and has no machine-readable form a partner can check against.
+      `openshift/api` gives a reviewed type, generated OpenAPI/CRD schema, deepcopy and
+      conversion — the ordinary machinery — at the cost of a type in `openshift/api` that
+      no API server ever serves. A third option is to keep it installer-local and **drop
+      the GVK**, making it an unversioned installer config file that promises nothing.
+      The current arrangement is the worst of the three: it promises API semantics it
+      does not implement.
+    * **How does `v1alpha1` become `v1beta1`?** Strict unmarshalling of a fixed
+      `apiVersion` means a bump breaks every published payload *and* every older
+      installer, in both directions, with no conversion path. Whatever the answer to the
+      first sub-question, the skew rule has to be written down before partners publish.
+    * **Can a partner validate without installing?** The natural answer is a
+      `openshift-install` subcommand that takes an image reference, extracts it, and runs
+      exactly the layout, executable and compatibility validation the install would —
+      reporting pass or fail and nothing else. It needs no install-config, no pull secret
+      and no cloud, which is what makes it usable in a partner's CI.
+    * **Is `create manifests` that gate?** Partly, today: it already resolves and
+      validates the payload (`pkg/asset/manifests/openshift.go:324`), so a descriptor
+      error does surface before any cloud call. But it is a poor partner-readiness check —
+      it needs a complete install-config including a pull secret and an SSH key, and it
+      produces a manifest tree containing TLS and CA private keys and the kubeadmin
+      password hash. Asking a partner to run it in CI to validate a descriptor hands them
+      a credential-store side effect for a structural check. It should stay the install's
+      gate, and not be the partner's.
+
+    Related: the Kubernetes compatibility range is compared against the version the
+    installer binary was built against rather than the release image's, which is the same
+    ownership question seen from the other side — the installer is asserting a fact about
+    the release from its own build rather than reading it.
 
 [ep-2138]: https://github.com/openshift/enhancements/pull/2138
 
@@ -1415,13 +1530,21 @@ controller, the infrastructure components, the manifest templates and the hooks 
 versioned unit, together with the two compatibility files described in the Workflow
 Description: clusterctl's `metadata.yaml`, which declares the Cluster API contract the
 controller implements, and `openshift.yaml`, which declares the Kubernetes version range
-the payload supports. The installer compares both against the release payload being
-installed and refuses the install outside the declared range, before any cloud call.
+the payload supports.
 
-That turns skew from a documentation question into a validated one for day 0, and it is
-the same standard structure that makes a generic compliance check possible at all — the
-installer can verify a payload's readiness because every payload has the same shape. It
-does not resolve the day-2 case, which remains with the delivery model work.
+**Only one of the two is checked, and that is a gap this proposal should close.** The
+installer compares `openshift.yaml`'s Kubernetes range against the version it was itself
+built against, and refuses the install outside it, before any cloud call. It does not read
+`metadata.yaml` at all, so the Cluster API contract a provider declares is unverified —
+which is the skew most likely to break a partner, because it is the one that moves when
+upstream Cluster API does and not when OpenShift does. Requiring `metadata.yaml` in the
+payload and checking its `releaseSeries` contract against the Cluster API version the
+installer runs is proposed here as Dev Preview work, not described as existing behaviour.
+
+With both files checked, skew becomes a validated question for day 0 rather than a
+documented one, and the standard payload structure is what makes a generic check possible
+at all — the installer can verify any payload's readiness because every payload has the
+same shape. None of it resolves the day-2 case, which remains with the delivery model work.
 
 ## Operational Aspects of API Extensions
 
