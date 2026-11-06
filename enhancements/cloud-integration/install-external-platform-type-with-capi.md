@@ -24,6 +24,10 @@ see-also:
   - "https://github.com/openshift/enhancements/pull/2138"
   # Earlier, unmerged attempt at DNS/LB on None and External with per-platform fields.
   - "https://github.com/openshift/enhancements/pull/1666"
+  # Deck with Executive summary of this EP
+  - https://htmlpreview.github.io/?https://raw.githubusercontent.com/mtulio/enhancements/refs/heads/platform-external-capi/enhancements/cloud-integration/install-external-platform-type-with-capi.html
+  # Benchmark of this EP with Top Cluster API providers implementations
+  - https://htmlpreview.github.io/?https://raw.githubusercontent.com/mtulio/enhancements/refs/heads/platform-external-capi/enhancements/cloud-integration/install-external-platform-type-with-capi-benchmark.html
 replaces: []
 superseded-by: []
 ---
@@ -172,6 +176,17 @@ does not cover install-time provisioning. This enhancement is the day-0 half.
 * **Automatic CSR approval for externally-provisioned nodes.** A pre-existing gap on both
   `platform: external` and `platform: none`; see
   [Open Questions](#open-questions-optional).
+* **Clouds for which Ignition has no platform provider.** This is a precondition of the
+  mechanism rather than a non-goal in the usual sense, and it is stated here because
+  nothing else in this enhancement states it. RHCOS reads its configuration through an
+  Ignition *platform provider*, selected by the `ignition.platform.id` kernel argument,
+  and upstream Ignition compiles in 31 of them
+  ([`coreos/ignition`, `docs/supported-platforms.md`][ign-platforms]). On a cloud absent
+  from that list there is no channel by which a configuration can reach the machine at
+  all — no hook can substitute for it, because every hook in this design still delivers
+  Ignition. Of the sixteen Cluster API providers surveyed in the
+  [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers), two are in this position: IONOS Cloud and Huawei Cloud. Adding a platform
+  provider is upstream Ignition work plus an RHCOS build, and is out of scope here.
 
 ## Proposal
 
@@ -964,6 +979,15 @@ is not a design preference — each gap below was hit by an install that failed 
 Three of the four are unconditional. `ignitionReady` is declared only by payloads that
 need it.
 
+That split was derived from two providers. It has since been checked against sixteen —
+the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) reads the published API types of the
+sixteen most-used Cluster API infrastructure providers against each gap below. The
+result is that the three unconditional hooks are needed by **16 of 16**, and
+`ignitionReady` by **eleven of the fourteen** that can run Ignition at all. No provider
+needed a *fifth* phase. The
+per-hook counts appear in each paragraph below; the point of stating them is that the
+hook set is now a measured claim rather than a generalisation from AWS and OCI.
+
 **`ignitionReady` — because the bootstrap ignition is final before provisioning starts,
 and some clouds cannot carry it.** `bootstrap.ign` is typically hundreds of kilobytes.
 CAPOCI base64-encodes machine user data into instance metadata
@@ -984,6 +1008,16 @@ three-phase shell script. `ignitionReady` turns that wrapper into a declared pha
 declared teardown counterpart. It is an escape hatch, not a general mechanism: the
 first-class fix for CAPOCI is the same offload capability upstream in CAPOCI.
 
+CAPA's position turns out to be close to unique. Across the sixteen providers surveyed
+in the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers), **one** offloads the bootstrap data natively
+(CAPA, `AWSCluster.spec.s3Bucket`) and **two** write it into a channel with no practical
+size ceiling — vSphere through `guestinfo`, Proxmox through a snippet file on cluster
+storage. The remaining **thirteen** hand the bootstrap Secret's bytes to a metadata or
+user-data API that is size-capped by the cloud, and **eleven** of those thirteen are
+platforms OpenShift could otherwise install on. This is why `ignitionReady` is
+conditional in the contract but not rare in practice. See Open Question 3 for what the
+measurement does and does not establish.
+
 **`infraReady` — because the cluster's own API endpoint does not exist until the provider
 has created it.** Nothing in the Cluster API contract publishes DNS, and no day-0 manifest
 can name an address that is allocated during the install. Without something creating
@@ -996,6 +1030,19 @@ Those Secrets cannot be day-0 manifests for exactly that reason. It is also wher
 load-balancer surface Cluster API does not model has to be created: CAPOCI has no field
 for a listener on 22623, which the machine-config server needs serving before the first
 machine boots.
+
+Both halves hold for all sixteen providers surveyed in the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers). **No** Cluster API
+infrastructure provider creates `api` or `api-int` records for a cluster domain: DNS is
+outside the Cluster API contract everywhere, not only on OCI. And only **five of the
+sixteen** can express an additional listener on 22623 declaratively, each through a
+provider-specific field — CAPA `AWSLoadBalancerSpec.additionalListeners`, CAPZ
+`additionalAPIServerLBPorts`, CAPO `APIServerLoadBalancer.additionalPorts`, CAPH
+`LoadBalancerSpec.extraServices`, and Linode `additionalPorts`. Five providers model a
+load balancer with no extension point at all, and six model no load balancer whatsoever
+(the kube-vip pattern); for those eleven, the listener is `infraReady` work by
+construction. The five that *can* express it are the reason the hook is a hook and not a
+mandatory step: a payload that can declare the listener in its cluster template should,
+and `infraReady` is then carrying only DNS and the partner's configuration Secrets.
 
 **`postProvision` — because Cluster API's definition of "ready" is narrower than
 OpenShift's.** `Cluster.status.ready` means the provider finished reconciling its own
@@ -1504,6 +1551,101 @@ partner validation model is a deliverable of OCPSTRAT-3724 in its own right.
 
 **Partners infrastructure readiness.** Nothing guarantee that the a successfull installation on a provider that Red Hat did not exercised conformance test and perf && scale validations is production ready. *Mitigation:* OpenShift engineering providers interfaces and programs to allow partners to enhance quality in their installations by self-validating (openshift-tests and/or OPCT tools) or applying to programs like VCSP (Validated Cloud and Service Provider).
 
+
+#### Benchmark: the proposal against sixteen Cluster API providers
+
+> This survey was researched and drafted by an AI agent (Claude Code, `claude-opus-5`)
+> from the providers' published API types. It has been spot-checked, not line-by-line
+> verified by a human. Treat the per-provider detail as indicative and re-verify before
+> citing it elsewhere. No decision in this enhancement rests on it: the benchmark
+> reinforced the direction already taken rather than changing it.
+
+The hook contract was derived from two providers — CAPA and CAPOCI — which is a thin
+base for a partner-facing contract. To test whether it generalises, the published API
+types of the sixteen most-used Cluster API infrastructure providers were read against
+each thing this proposal requires: a bootstrap format RHCOS can consume, a way to get an
+oversized Ignition config to the machine, somewhere to attach a listener on 22623, DNS
+for the cluster domain, and a published RHCOS boot image. This is a documentary survey of
+APIs, not an install of sixteen clusters; nothing below is a test result except where it
+says *measured*.
+
+**The headline is that the hooks are not the limit — the boot image is.** The four
+lifecycle points covered every provider-specific shortfall found, and no provider needed
+a fifth. What stops most of these platforms is that RHCOS is not published for them.
+
+| Provider | Verdict | `ignition.platform.id` | RHCOS artifact | 22623 listener | Needs `ignitionReady` |
+| --- | --- | --- | --- | --- | --- |
+| [AWS](https://github.com/kubernetes-sigs/cluster-api-provider-aws) | Fits today | `aws` | image + artifact | `AWSLoadBalancerSpec.additionalListeners` | no — native offload |
+| [Azure](https://github.com/kubernetes-sigs/cluster-api-provider-azure) | Fits today | `azure` | artifact | `additionalAPIServerLBPorts` | likely |
+| [GCP](https://github.com/kubernetes-sigs/cluster-api-provider-gcp) | Fits today | `gcp` | image + artifact | none | likely |
+| [vSphere](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere) | Fits today | `vmware` | artifact | no LB modelled (kube-vip) | no — `guestinfo` |
+| [IBM Cloud](https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud) | Fits today | `ibmcloud` | artifact | none | likely |
+| [Nutanix](https://github.com/nutanix-cloud-native/cluster-api-provider-nutanix) | Fits today | `nutanix` | artifact | no LB modelled (kube-vip) | likely |
+| [OpenStack](https://github.com/kubernetes-sigs/cluster-api-provider-openstack) | Fits today | `openstack` | artifact | `APIServerLoadBalancer.additionalPorts` | likely |
+| [OCI](https://github.com/oracle/cluster-api-provider-oci) | Blocked on the boot image | `oraclecloud` | **none** | none — single `BackendSetDetails` | **yes — measured** |
+| [Hetzner](https://github.com/syself/cluster-api-provider-hetzner) | Blocked on the boot image | `hetzner` | **none** | `LoadBalancerSpec.extraServices` | likely |
+| [Proxmox](https://github.com/ionos-cloud/cluster-api-provider-proxmox) | Blocked on the boot image | `proxmoxve` | **none** | no LB modelled | no — storage snippet |
+| [DigitalOcean](https://github.com/kubernetes-sigs/cluster-api-provider-digitalocean) | Blocked on the boot image | `digitalocean` | **none** | none | likely |
+| [Akamai / Linode](https://github.com/linode/cluster-api-provider-linode) | Blocked on the boot image | `akamai` | **none** | `additionalPorts` | likely |
+| [CloudStack](https://github.com/kubernetes-sigs/cluster-api-provider-cloudstack) | Blocked on the boot image | `cloudstack` | **none** | no LB modelled | likely |
+| [Outscale](https://github.com/outscale/cluster-api-provider-outscale) | Blocked on the boot image | `outscale` | **none** | none | likely |
+| [IONOS Cloud](https://github.com/ionos-cloud/cluster-api-provider-ionoscloud) | **Outside the model** | **none** | **none** | no LB modelled | n/a |
+| [Huawei Cloud](https://github.com/huaweicloud-samples/cloudnative-cluster-api-provider-huawei) | **Outside the model** | **none** | **none** | no LB modelled | n/a |
+
+Also surveyed and excluded, with reasons: **Alibaba Cloud** has no official provider (the
+`kubernetes-sigs` repository returns 404 and `clusterctl`'s registry has no entry), though
+an unofficial single-maintainer provider exists that targets `platform: external`
+explicitly — it adopts a VPC and load balancer built elsewhere and manages worker machines
+only, so it cannot exercise this proposal, but it is cited under Open Question 3 because
+it independently reinvented the Ignition offload. **Tencent Cloud**'s provider was last
+pushed in 2022 and exposes only managed-TKE types. The **Huawei Cloud** repository usually
+listed is an empty shell; the row above is the `huaweicloud-samples` provider `clusterctl`
+actually points at.
+
+What the survey establishes, each of which is used elsewhere in this document:
+
+* **The three unconditional hooks are needed by 16 of 16.** No Cluster API infrastructure
+  provider creates `api` or `api-int` records for a cluster domain — DNS is outside the
+  Cluster API contract everywhere, not a CAPOCI gap. See *Why each hook exists*.
+* **`ignitionReady` is correctly conditional, and conditional does not mean rare.** Of
+  the fourteen providers that can run Ignition at all, **three** do not need it — CAPA
+  offloads natively to `AWSCluster.spec.s3Bucket`, vSphere writes through `guestinfo`, and
+  Proxmox writes a snippet to cluster storage — and the other eleven hand the bootstrap
+  Secret's bytes to a size-capped cloud metadata or user-data API. Only OCI's ceiling has
+  been measured against a real `bootstrap.ign`. See Open Question 3.
+* **Only five of sixteen can declare the 22623 listener.** Five more model a load balancer
+  with no extension point, and six model none at all. For eleven providers the listener is
+  `infraReady` work by construction.
+* **Six of sixteen model no load balancer whatsoever**, following the kube-vip pattern
+  where `Cluster.spec.controlPlaneEndpoint` is an input rather than something the provider
+  allocates. This proposal has no answer for those platforms today, because `infraReady`
+  runs after the provider has reconciled a template that already had to name an address.
+  See Open Question 9(d).
+* **Nine of sixteen have no RHCOS artifact**, and seven of those nine have a working
+  Ignition platform — the operating system can already boot and configure itself there and
+  only the published artifact is missing. This is the largest single limit on the reach of
+  this enhancement, and the reason the artifact override in Open Question 11 must not be a
+  per-platform special case.
+* **Two of sixteen are outside the mechanism entirely.** IONOS Cloud and Huawei Cloud have
+  no Ignition platform provider, so no channel exists by which RHCOS can read a
+  configuration on them. See Non-Goals.
+
+The risk this surfaces is not that the contract is wrong. It is that **the contract's
+reach is narrower than the provider ecosystem suggests**, and that the narrowing is caused
+by something this enhancement does not own. A reader should take the hook set as
+generalising well and the shipping story as gated on boot images.
+
+*Mitigation:* none of this changes the design, and that is the finding. The actions it
+does imply are to keep the hook set frozen at four for `v1beta1` (Open Question 14), to
+treat the RHCOS artifact override as a prerequisite for any second provider rather than an
+OCI workaround (Open Question 11), and to answer the no-load-balancer case before claiming
+on-prem-like platforms are in scope (Open Question 9).
+
+The full survey, with per-provider API citations, repository activity and the reasoning
+for each verdict, is published as a companion artifact:
+[Cluster API provider coverage benchmark][capi-benchmark]. It is exploratory and is not
+part of this enhancement's normative content.
+
 ### Drawbacks
 
 * It adds a supported configuration in which a significant part of the install is executed
@@ -1786,7 +1928,33 @@ checksum rather than content — carries over as it was proved.
    `AWSCluster.spec.s3Bucket`, offloading **downstream** of the Secret where the installer
    never has to see the result. The genuinely first-class fix for CAPOCI is the same
    capability upstream in CAPOCI. `ignitionReady` is the escape hatch for providers whose
-   controller does not offload, and how many providers that is remains unmeasured.
+   controller does not offload.
+
+   **How many providers that is, measured.** The [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) read the published API types of
+   sixteen providers. One offloads natively — CAPA, `AWSCluster.spec.s3Bucket`. Two write
+   the bootstrap data into a channel with no practical size ceiling: vSphere through
+   `guestinfo`, Proxmox through a snippet file on cluster storage
+   (`internal/service/vmservice/bootstrap.go`, which branches on the bootstrap Secret's
+   `format` key). The other **thirteen** pass the Secret's bytes straight into a
+   cloud metadata or user-data API; eleven of those thirteen have an Ignition platform
+   and so are candidate targets, the other two being out of reach for an unrelated
+   reason. Stated conservatively: **of the fourteen providers that can run Ignition at
+   all, at most three do not need `ignitionReady`.** The honest limit of that number is that only OCI's ceiling was
+   measured against a real `bootstrap.ign` (32,000 bytes, against a document in the
+   hundreds of kilobytes); for the other twelve the field exists and the cap is
+   documented by the cloud, but no install has been attempted. The claim the measurement
+   does support is directional and is the one that matters here: offload is the exception
+   among Cluster API providers, not the norm, so a contract that assumes a controller
+   will offload would fail on most of them.
+
+   Two independent providers have already reinvented the offload in-provider, which is
+   evidence both that the need is real and that it is not being solved once. CAPA's
+   `s3Bucket` is one. The other is the unofficial AliCloud provider's
+   `AlibabaCloudCluster.spec.ignitionStorage`, which stages the document in an OSS bucket
+   and substitutes a pointer config — the same design, on a different cloud, with no
+   coordination between them. That argues for the offload being specified upstream in
+   Cluster API's bootstrap contract rather than per provider; `ignitionReady` is what
+   makes OpenShift's installs work in the meantime, in either outcome.
 4. **Should `clusterAPI.args` be able to override an installer-supplied flag by name, rather than only append?** Today's answer is a per-partner wrapper script.
 5. **Do we validate user-supplied providers, and how?** A conformance suite is the obvious answer and nobody has scoped one. An openshift-tests-extension (OTE) mechanism could be created, but requires flexibility in the test framework as well, outside of scope, as well it is openshift-specific.
 6. **How are failure modes surfaced?** Installer logs only, or do we need a path that explicitly signals the failing component is not Red Hat owned?
@@ -1798,8 +1966,23 @@ checksum rather than content — carries over as it was proved.
     *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently scoped to `platform: None`.
     *(c)* The installer derives them from the Cluster API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
 
+    *(d)* **Nobody does, and the address has to be known before the install starts.** The
+    [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) found that **six of sixteen** providers model no load balancer in their API at
+    all — vSphere, Nutanix, Proxmox, CloudStack, IONOS and Huawei — because they follow
+    the kube-vip pattern, where the control-plane VIP is an address the administrator
+    supplies and a static pod on the control-plane nodes claims. On those platforms
+    `Cluster.spec.controlPlaneEndpoint` is an *input* to the cluster template, not
+    something the provider allocates, and there is no load-balancer object for a 22623
+    listener to be added to. This is a distinct case from the provider-allocated endpoint
+    discussed in Open Question 13, and the enhancement currently has no answer for it:
+    `infraReady` cannot supply the address, because it runs after the provider has already
+    reconciled against a template that had to name one. If the contract is to cover these
+    platforms, the address must be sourced from the install-config or from the payload's
+    cluster template before provisioning begins, and the machine-config server's 22623
+    endpoint needs an answer that is not a cloud load balancer.
+
 10. **Should an extra manifest directory, from pilot, be allowed to contain multiple documents?** The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
-11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for at least one partner platform no generic, multi-tenant image is published. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
+11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for most candidate partner platforms no generic, multi-tenant image is published. This is now measured and it is the single largest limit on how far this enhancement reaches. Of the sixteen Cluster API providers surveyed in the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers), **nine** have no published RHCOS artifact in `data/data/coreos/coreos-rhel-9.json`; **seven** of those nine have a working Ignition platform provider, so the operating system can already boot and configure itself there and only the published artifact is missing — OCI, DigitalOcean, Linode, CloudStack, Hetzner, Outscale and Proxmox. That ratio is the argument against a per-platform special case: a mechanism built for OCI alone would have to be built again six more times. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
 12. **Automatic CSR approval.** There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
 13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**:
     [openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
@@ -1857,7 +2040,19 @@ checksum rather than content — carries over as it was proved.
     ownership question seen from the other side — the installer is asserting a fact about
     the release from its own build rather than reading it.
 
+    **One input to that decision: the hook set looks stable.** The riskiest part of a
+    version bump is a change to the set of lifecycle points, because adding one changes
+    what every published payload must declare. The [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) looked for a gap in the sixteen
+    providers' APIs that none of the four hooks covers, and did not find one: every
+    provider-specific shortfall landed in an existing phase. That is not proof the set is
+    complete — a provider outside the sixteen, or a future OpenShift requirement, could
+    still add one — but it is positive evidence that the set can be frozen at four for
+    `v1beta1` rather than left open, and freezing it removes the most likely reason a
+    breaking bump would be needed.
+
 [ep-2138]: https://github.com/openshift/enhancements/pull/2138
+[ign-platforms]: https://github.com/coreos/ignition/blob/main/docs/supported-platforms.md
+[capi-benchmark]: https://htmlpreview.github.io/?https://raw.githubusercontent.com/mtulio/enhancements/refs/heads/platform-external-capi/enhancements/cloud-integration/install-external-platform-type-with-capi-benchmark.html
 
 ## Test Plan
 
