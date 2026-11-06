@@ -878,7 +878,7 @@
     <div class="cols-4">
       <div class="panel ext">
         <h3>ignitionReady</h3>
-        <p class="small body"><strong>Conditional — most payloads will not declare it.</strong> Only for providers whose controller cannot stage an oversized bootstrap ignition itself.</p>
+        <p class="small body"><strong>Conditional, but not rare.</strong> Only for providers whose controller cannot stage an oversized bootstrap ignition itself — which, measured across sixteen providers, is <strong>eleven of the fourteen</strong> that can run Ignition at all.</p>
         <p class="small body">CAPA can: the installer hands it the full ignition in a Secret and the controller uploads to <code>AWSCluster.spec.s3Bucket</code>. CAPOCI cannot — it base64-encodes user data into instance metadata (<code>cloud/scope/machine.go:353</code>), and <strong>OCI itself</strong> caps that metadata at 32,000 bytes against a <code>bootstrap.ign</code> of hundreds of KB. The cap is the cloud's, not the provider's: no such constant exists in CAPOCI, so the install fails at the cloud API with a message about metadata size and nothing that mentions Ignition.</p>
         <p class="small body">The only hook whose <em>output</em> the installer reads back, via a <code>bootstrapOutputPath</code> the payload declares — which may not be named <code>bootstrap.ign</code>, so the installer's own artifact is never shadowed. <strong>Gated</strong> by an opt-in install-config field, <code>platform.external.clusterAPI.bootstrapIgnitionStaging</code> — an enum, so &ldquo;signed payloads only&rdquo; is a later third value rather than a second field.</p>
       </div>
@@ -886,7 +886,7 @@
         <h3>infraReady</h3>
         <p class="small body">Publishes <code>api</code> and <code>api-int</code>. <strong>The one hook an install cannot do without.</strong></p>
         <p class="small body">Pointer ignition targets <code>api-int:22623</code>. With no record, bootkube fails at <code>resolve-api-int-url</code> — and the install dies 40 minutes later at the bootstrap timeout.</p>
-        <p class="small body">It is also the earliest point the provider's identifiers — OCIDs, subnet and LB ids — exist at all, so it is the only place the <strong>CCM and CSI config Secrets</strong> can be written. They cannot be day-0 manifests for exactly that reason. Same for load-balancer surface CAPI does not model: CAPOCI has no field for a 22623 listener.</p>
+        <p class="small body">It is also the earliest point the provider's identifiers — OCIDs, subnet and LB ids — exist at all, so it is the only place the <strong>CCM and CSI config Secrets</strong> can be written. They cannot be day-0 manifests for exactly that reason. Same for load-balancer surface CAPI does not model: CAPOCI has no field for a 22623 listener, and only five of sixteen providers have one.</p>
       </div>
       <div class="panel ext">
         <h3>postProvision</h3>
@@ -1031,6 +1031,62 @@
 
 <section class="slide" id="slide-14" aria-hidden="true">
   <div class="inner">
+    <p class="eyebrow">Evidence</p>
+    <h2 class="wide">Sixteen providers say the hooks generalise. The boot image is the limit.</h2>
+    <p class="lede">The contract was derived from two providers — a thin base for something partners build against. Read against the published API types of the sixteen most-used Cluster API infrastructure providers, the hooks held and the operating system did not.</p>
+
+    <table class="tbl">
+      <thead>
+        <tr><th>Requirement</th><th>Of sixteen providers</th><th>Consequence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>DNS for the cluster domain</strong></td>
+          <td><strong>0</strong> create <code>api</code> or <code>api-int</code> records</td>
+          <td>DNS is outside the Cluster API contract <em>everywhere</em>. <code>infraReady</code>, <code>postProvision</code> and <code>preDestroy</code> are needed by 16 of 16 — not a CAPOCI gap.</td>
+        </tr>
+        <tr>
+          <td><strong>A listener on 22623</strong></td>
+          <td><strong>5</strong> can declare it; 5 model a load balancer with no extension point; <strong>6</strong> model no load balancer at all</td>
+          <td>For eleven providers the MCS listener is <code>infraReady</code> work by construction. The six with no load balancer follow the kube-vip pattern — and this proposal has no answer for them yet.</td>
+        </tr>
+        <tr>
+          <td><strong>Offloading an oversized ignition</strong></td>
+          <td><strong>3</strong> of the fourteen that can run Ignition need no help — CAPA's <code>s3Bucket</code>, vSphere's <code>guestinfo</code>, Proxmox's storage snippet</td>
+          <td><code>ignitionReady</code> is correctly conditional, and conditional is not rare: the other eleven hand the bootstrap bytes to a size-capped cloud metadata API.</td>
+        </tr>
+        <tr>
+          <td><strong>A published RHCOS artifact</strong></td>
+          <td><strong>9</strong> have none — and <strong>7</strong> of those nine already have a working Ignition platform</td>
+          <td><strong>This, not the hook design, is what limits the reach of the enhancement.</strong> The OS can boot and configure itself on those seven; only the artifact is missing.</td>
+        </tr>
+        <tr>
+          <td><strong>An Ignition platform at all</strong></td>
+          <td><strong>2</strong> have none — IONOS Cloud, Huawei Cloud</td>
+          <td>No channel exists by which RHCOS can read a configuration there. No hook substitutes for it; this is the mechanism's hard lower bound.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="cols-2">
+      <div class="panel ocp">
+        <h3>What this validates</h3>
+        <p class="small body"><strong>No provider needed a fifth phase.</strong> Every provider-specific shortfall landed in one of the four lifecycle points already proposed. That is positive evidence the hook set can be <em>frozen</em> at four for <code>v1beta1</code> rather than left open — which removes the most likely reason a breaking version bump would ever be needed.</p>
+        <p class="small body">Two providers have independently reinvented the ignition offload in-provider — CAPA's <code>s3Bucket</code> and an unofficial AliCloud provider's <code>ignitionStorage</code>. Same design, different clouds, no coordination: the need is real and is not being solved once.</p>
+      </div>
+      <div class="panel ext">
+        <h3>What it exposes</h3>
+        <p class="small body">The contract's <strong>reach is narrower than the provider ecosystem suggests</strong>, and the narrowing is caused by something this enhancement does not own. Take the hook set as generalising well and the shipping story as gated on boot images.</p>
+        <p class="small body">Two consequences for review: the RHCOS artifact override is a prerequisite for <em>any</em> second provider rather than an OCI workaround, and the no-load-balancer case needs an answer before on-prem-like platforms can be claimed in scope.</p>
+      </div>
+    </div>
+
+    <p class="callout"><strong>What this is not.</strong> A documentary survey of published APIs, not sixteen installs. Only OCI's 32,000-byte metadata ceiling has been measured against a real <code>bootstrap.ign</code>. Researched and drafted by an AI agent (Claude Code, <code>claude-opus-5</code>), spot-checked rather than line-by-line verified by a human. <strong>No decision in the proposal rests on it</strong> — the benchmark reinforced the direction already taken rather than changing it.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-15" aria-hidden="true">
+  <div class="inner">
     <p class="eyebrow">Review</p>
     <h2>Three changes touch code integrated platforms run</h2>
     <p class="lede">Everything else is new packages on a path no integrated platform reaches. These three are where review attention belongs.</p>
@@ -1055,7 +1111,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-15" aria-hidden="true">
+<section class="slide" id="slide-16" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Risks</p>
     <h2>Four risks worth naming out loud</h2>
@@ -1084,7 +1140,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-16" aria-hidden="true">
+<section class="slide" id="slide-17" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Open questions</p>
     <h2>What is genuinely undecided</h2>
@@ -1103,9 +1159,9 @@
       <div class="panel ext">
         <h3>Before GA</h3>
         <ul class="plain">
-          <li><strong>Who supplies the ingress and API endpoint addresses?</strong> Three plausible answers, not equivalent, and the platform's own character decides — which argues for permitting more than one.</li>
+          <li><strong>Who supplies the ingress and API endpoint addresses?</strong> Three plausible answers, not equivalent, and the platform's own character decides — which argues for permitting more than one. A fourth case has no answer at all: <strong>six of sixteen providers model no load balancer</strong>, so <code>controlPlaneEndpoint</code> is an input and <code>infraReady</code> runs too late to supply it.</li>
           <li><strong>Must partner CCM and CSI tag what they create?</strong> Teardown is not supportable without it.</li>
-          <li><strong>Boot images.</strong> The capability exists in RHCOS; the published artifact does not. Blocks continuous CI for the second provider only.</li>
+          <li><strong>Boot images.</strong> The capability exists in RHCOS; the published artifact does not — for <strong>nine of sixteen</strong> surveyed providers, seven of which already have a working Ignition platform. Blocks continuous CI for the second provider, and most of the ecosystem after it.</li>
           <li><strong>CSR approval.</strong> Pre-dates this work, applies equally to <code>platform: none</code>, has no owner. Only settled point: it is not the installer.</li>
         </ul>
       </div>
@@ -1115,7 +1171,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-17" aria-hidden="true">
+<section class="slide" id="slide-18" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Graduation</p>
     <h2 class="wide">Dev Preview → Tech Preview → GA</h2>
@@ -1155,7 +1211,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-18" aria-hidden="true">
+<section class="slide" id="slide-19" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Support</p>
     <h2>An install fails in one of four places, in order</h2>
@@ -1188,7 +1244,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-19" aria-hidden="true">
+<section class="slide" id="slide-20" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Summary</p>
     <h2>Red Hat ships the seam, not the provider</h2>

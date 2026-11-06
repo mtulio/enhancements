@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CAPI provider coverage benchmark — install-external-platform-type-with-capi</title>
+<style>
+:root{--bg:#0C0F13;--surface:#151A21;--surface2:#1B222B;--ink:#E6EAF0;--muted:#97A2B0;--faint:#6F7B8A;
+--line:#232B35;--line-strong:#39434F;--ocp:#6FAFE4;--ocp-soft:#12283C;--ext:#D8A055;--ext-soft:#2C2214;
+--good:#5FB98A;--good-soft:#13291F;--bad:#D97A72;--bad-soft:#2E1917;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+font-size:15px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:0 auto;padding:48px 28px 96px}
+.scroll{overflow-x:auto}
+h1{font-size:30px;line-height:1.25;margin:0 0 8px;letter-spacing:-.4px}
+h2{font-size:21px;margin:56px 0 10px;letter-spacing:-.2px;padding-top:18px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:30px 0 8px;color:var(--ocp)}
+p{margin:0 0 14px;color:#CFD6DF}
+.lede{color:var(--muted);font-size:16px;max-width:76ch}
+.meta{font-family:var(--mono);font-size:11.5px;color:var(--faint);letter-spacing:.4px;margin:0 0 30px}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface2);padding:1px 5px;border-radius:4px;
+color:#CBD5E1;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;margin:18px 0 10px;font-size:13px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--faint);font-family:var(--mono);font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;
+font-weight:600;border-bottom:1px solid var(--line-strong);white-space:nowrap}
+tbody tr:hover{background:#121821}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.6px;padding:2px 7px;
+border-radius:99px;border:1px solid;white-space:nowrap}
+.green{color:var(--good);border-color:#2C5844;background:var(--good-soft)}
+.amber{color:var(--ext);border-color:#5A4522;background:var(--ext-soft)}
+.red{color:var(--bad);border-color:#5E3330;background:var(--bad-soft)}
+a{color:var(--ocp);text-decoration:none;border-bottom:1px solid #2C4458}
+a:hover{border-bottom-color:var(--ocp)}
+tbody.excluded td{color:var(--faint);background:#10151B}
+tbody.excluded strong a{color:var(--muted)}
+.grey{color:var(--faint);border-color:var(--line-strong);background:#12171E}
+.sep td{background:var(--bg);border-bottom:1px solid var(--line-strong);
+font-family:var(--mono);font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--faint);
+padding-top:22px}
+.h-yes{color:var(--ext)}.h-no{color:var(--faint)}.h-unk{color:var(--muted)}.h-na{color:#4A535F}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0}
+.card.risk{border-left:3px solid var(--ext)}
+.card.key{border-left:3px solid var(--ocp)}
+.card h4{margin:0 0 6px;font-size:14.5px;color:var(--ink)}
+.card p{margin:0 0 8px;font-size:14px;color:#C3CBD6}
+.card p:last-child{margin:0}
+ul{margin:0 0 14px;padding-left:20px;color:#CFD6DF}li{margin:0 0 6px}
+.num{display:inline-block;width:22px;height:22px;line-height:21px;text-align:center;border-radius:50%;
+background:var(--ext-soft);border:1px solid #5A4522;color:var(--ext);font-family:var(--mono);font-size:11px;
+margin-right:8px;flex:0 0 auto}
+.q{display:flex;align-items:flex-start;margin:0 0 12px}
+.scale{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 24px}
+.scale div{flex:1 1 300px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+.scale strong{display:block;font-size:13.5px;margin-bottom:4px}
+.scale span{font-size:12.5px;color:var(--muted);line-height:1.5}
+.note{font-size:12.5px;color:var(--faint);margin:6px 0 0}
+.src{font-family:var(--mono);font-size:11px;color:var(--faint)}
+</style></head><body><div class="wrap">
+
+<h1>Does the external-platform CAPI proposal fit the Cluster API provider ecosystem?</h1>
+<p class="lede">An exploratory benchmark of sixteen Cluster API infrastructure providers against the payload
+and four-hook mechanism proposed in <code>install-external-platform-type-with-capi</code>. The question is
+narrow: are the four hooks the right set, and are they enough? Nothing in the enhancement proposal was
+changed to produce this.</p>
+<p class="meta">EXPLORATORY · NOT A PLAN VERSION · NOT AN INPUT TO THE EP UNTIL REVIEWED · 2026-11-06</p>
+
+<div class="card key">
+<h4>The short answer</h4>
+<p>The four hooks are the right set and they are sufficient. Across all sixteen providers examined, no
+scenario appeared that needs a fifth phase, and no provider makes one of the four redundant in a way that
+would justify dropping it. <code>infraReady</code>, <code>postProvision</code> and
+<code>preDestroy</code> are needed by <strong>every</strong> provider, because <strong>no Cluster API
+infrastructure provider creates <code>api</code>/<code>api-int</code> DNS records for a cluster domain</strong>
+— they publish an endpoint, not a name — and because anything a hook creates is unowned by a Cluster API
+object and therefore invisible to <code>destroy</code>.</p>
+<p>The binding constraint on coverage is <strong>not the hook contract</strong>. It is the boot image.
+Nine of the sixteen clouds have no published RHCOS artifact, and two have no Ignition platform provider at
+all. Both are upstream problems the hooks cannot reach.</p>
+</div>
+
+<h2>Scope, and what was excluded</h2>
+<p>Eighteen repositories were named and one more was raised during review. Sixteen are benchmarked; the
+rest are findings in their own right, and are listed at the foot of the result table so the set stays complete:</p>
+<ul>
+<li><strong>Alibaba Cloud</strong> — <code>aliyun/cluster-api-provider-alibabacloud</code> returns HTTP 404.
+There is no Alibaba Cluster API infrastructure provider: the repository does not exist, and clusterctl's
+provider registry has no Alibaba entry. <code>openshift/cluster-api-provider-alibaba</code> is a Machine API
+actuator, which is a different contract. Ignition does support the <code>aliyun</code> platform, so the
+gap here is the provider, not the operating system — and one community project has started filling it,
+discussed below.</li>
+<li><strong>Tencent Cloud</strong> — <code>TencentCloud/cluster-api-provider-tencent</code> was last pushed
+<strong>2022-10-24</strong> and exposes only <code>tkeclusters</code> and <code>tkemanagedmachinepools</code>.
+It is a managed-TKE provider, not a self-managed infrastructure provider, and it is absent from clusterctl's
+registry. It cannot provision the machines this proposal needs, at any version.</li>
+<li><strong>Huawei Cloud</strong> — the repository named, <code>HuaweiCloudDeveloper/cluster-api-provider-huawei</code>,
+is an empty shell: 0 stars, one path in its tree. clusterctl points instead at
+<code>huaweicloud-samples/cloudnative-cluster-api-provider-huawei</code>, which is what was benchmarked.</li>
+</ul>
+<p>All sixteen benchmarked providers <strong>are listed in clusterctl's provider registry</strong>
+(<code>cmd/clusterctl/client/config/providers_client.go</code>), which means each publishes
+<code>infrastructure-components.yaml</code> and <code>metadata.yaml</code> as release assets. The payload's
+<code>layout.customResource</code> and its sibling <code>metadata.yaml</code> therefore assume nothing a
+conforming provider does not already produce. <strong>Sixteen of sixteen pass the packaging axis.</strong></p>
+
+<div class="card key">
+<h4>An unofficial Alibaba provider that already aims at <code>platform: external</code></h4>
+<p><a href="https://github.com/SammZhu/openshift-capi-alicloud">SammZhu/openshift-capi-alicloud</a> describes
+itself as a Cluster API infrastructure provider for Alibaba Cloud <em>targeting OpenShift External Platform
+mode</em>. Its own README opens with the disclaimer, in its words: <em>&ldquo;Unofficial, community-maintained
+project. Not affiliated with, endorsed by&hellip;&rdquo;</em> — single-maintainer, best-effort, zero stars,
+Apache-2.0, created 2026-05-13, last pushed 2026-10-14. <strong>It is not an official Alibaba provider, it is
+not in clusterctl's registry, and nothing here should be read as Red&nbsp;Hat recognising it.</strong> It is
+reported because of what it independently chose to build.</p>
+<p><strong>It cannot exercise this proposal.</strong> Its stated design installs the control plane with the
+Agent-based or Assisted installer into a VPC and SLB created beforehand by ROS templates; the provider then
+<em>adopts</em> that infrastructure and manages worker <code>Machine</code>s only. Greenfield control-plane
+provisioning is explicitly not implemented. That is the day-2 machine-management shape — OCPSTRAT-1322's
+territory — not the day-0 provisioning this EP specifies.</p>
+<p><strong>Two things in it are nonetheless evidence.</strong> First, it is a conforming clusterctl provider
+by construction: release <code>v0.1.24</code> ships <code>infrastructure-components.yaml</code>,
+<code>metadata.yaml</code> and <code>cluster-template.yaml</code> as assets — exactly the packaging the
+payload's <code>layout.customResource</code> assumes. Second, and more interesting, it carries an
+<code>AlibabaCloudCluster.spec.ignitionStorage</code> field that offloads an oversized Ignition config to an
+OSS bucket and boots the instance from a pointer config. An independent developer, working on a different
+cloud with no knowledge of this EP, arrived at the <em>same</em> answer CAPA reached with
+<code>spec.s3Bucket</code>: the offload belongs <strong>in the provider</strong>. That corroborates the EP's
+own position that <code>ignitionReady</code> is an escape hatch and the first-class fix is upstream in the
+provider — and it is a second data point for open question&nbsp;1 below.</p>
+</div>
+
+<h2>The result</h2>
+<div class="scale">
+<div><strong class="green">Fits today — 7</strong><span>The payload mechanism works as specified: Ignition is a supported platform for this cloud and OpenShift already publishes an RHCOS artifact for it.</span></div>
+<div><strong class="amber">Fits, blocked on the boot image — 7</strong><span>Nothing in the hook contract is missing. The cluster cannot be installed because OpenShift publishes no RHCOS artifact for this cloud.</span></div>
+<div><strong class="red">Outside the model — 2</strong><span>Ignition has no platform provider for this cloud, so RHCOS cannot read a configuration on it at all. No hook can supply what is missing.</span></div>
+</div>
+
+<div class="scroll"><table><thead><tr>
+<th>Provider</th><th>Verdict</th><th>Ignition platform</th><th>RHCOS artifact</th>
+<th>22623 listener expressible in the API?</th>
+<th>ignition<br>Ready</th><th>infra<br>Ready</th><th>post<br>Provision</th><th>pre<br>Destroy</th>
+</tr></thead><tbody>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-aws">AWS</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>aws</code></td>
+<td>image + artifact</td>
+<td><code>AdditionalListeners</code></td>
+<td class="h-no">no</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-azure">Azure</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>azure</code></td>
+<td>artifact</td>
+<td><code>AdditionalAPIServerLBPorts</code></td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-gcp">GCP</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>gcp</code></td>
+<td>image + artifact</td>
+<td>none — <code>LoadBalancer</code> has no extra-port field</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-vsphere">vSphere</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>vmware</code></td>
+<td>artifact</td>
+<td>no load balancer modelled (kube-vip pattern)</td>
+<td class="h-no">no</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud">IBM Cloud</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>ibmcloud</code></td>
+<td>artifact</td>
+<td>none — <code>ControlPlaneLoadBalancer</code> has no extra-listener field</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/nutanix-cloud-native/cluster-api-provider-nutanix">Nutanix</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>nutanix</code></td>
+<td>artifact</td>
+<td>no load balancer modelled (kube-vip pattern)</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-openstack">OpenStack</a></strong></td>
+<td><span class="pill green">Fits today</span></td>
+<td><code>openstack</code></td>
+<td>artifact</td>
+<td><code>APIServerLoadBalancer.additionalPorts</code></td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/oracle/cluster-api-provider-oci">OCI</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>oraclecloud</code></td>
+<td><strong>none</strong></td>
+<td>none — single <code>BackendSetDetails</code>, no listener list</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/syself/cluster-api-provider-hetzner">Hetzner</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>hetzner</code></td>
+<td><strong>none</strong></td>
+<td><code>LoadBalancerSpec.extraServices</code></td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/ionos-cloud/cluster-api-provider-proxmox">Proxmox</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>proxmoxve</code></td>
+<td><strong>none</strong></td>
+<td>no load balancer modelled</td>
+<td class="h-no">no</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-digitalocean">DigitalOcean</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>digitalocean</code></td>
+<td><strong>none</strong></td>
+<td>none — <code>DOLoadBalancer</code> has one <code>Port</code></td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/linode/cluster-api-provider-linode">Akamai / Linode</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>akamai</code></td>
+<td><strong>none</strong></td>
+<td><code>LinodeCluster … additionalPorts</code> (NodeBalancer)</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-cloudstack">CloudStack</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>cloudstack</code></td>
+<td><strong>none</strong></td>
+<td>no load balancer modelled</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/outscale/cluster-api-provider-outscale">Outscale</a></strong></td>
+<td><span class="pill amber">Fits, blocked on the boot image</span></td>
+<td><code>outscale</code></td>
+<td><strong>none</strong></td>
+<td>none — <code>LoadBalancer</code> has no extra-listener field</td>
+<td class="h-unk">unverified</td><td class="h-yes">yes</td>
+<td class="h-yes">yes</td><td class="h-yes">yes</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/ionos-cloud/cluster-api-provider-ionoscloud">IONOS Cloud</a></strong></td>
+<td><span class="pill red">Outside the model</span></td>
+<td><strong style="color:var(--bad)">none</strong></td>
+<td><strong>none</strong></td>
+<td>no load balancer modelled</td>
+<td class="h-na">n/a</td><td class="h-na">n/a</td>
+<td class="h-na">n/a</td><td class="h-na">n/a</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/huaweicloud-samples/cloudnative-cluster-api-provider-huawei">Huawei Cloud</a></strong></td>
+<td><span class="pill red">Outside the model</span></td>
+<td><strong style="color:var(--bad)">none</strong></td>
+<td><strong>none</strong></td>
+<td>no load balancer modelled</td>
+<td class="h-na">n/a</td><td class="h-na">n/a</td>
+<td class="h-na">n/a</td><td class="h-na">n/a</td>
+</tr>
+</tbody>
+<tbody class="excluded">
+<tr class="sep"><td colspan="9">Named, but not benchmarked — and why</td></tr>
+<tr><td><strong><a href="https://github.com/aliyun/cluster-api-provider-alibabacloud">Alibaba Cloud</a></strong></td>
+<td><span class="pill grey">Does not exist</span></td><td><code>aliyun</code></td><td>none</td>
+<td colspan="5">Repository returns HTTP 404 and clusterctl's registry has no Alibaba entry. There is no official
+Alibaba Cluster API infrastructure provider. Ignition supports the cloud; the provider is what is missing.</td></tr>
+<tr><td><strong><a href="https://github.com/SammZhu/openshift-capi-alicloud">Alibaba Cloud <em>(unofficial)</em></a></strong></td>
+<td><span class="pill grey">Unofficial · day&#8209;2 only</span></td><td><code>aliyun</code></td><td>none</td>
+<td colspan="5">A single-maintainer community provider that targets <code>platform: external</code> explicitly — but
+<strong>adopts</strong> a VPC and SLB built elsewhere and manages worker machines only. Greenfield control-plane
+provisioning is not implemented, so it cannot exercise this proposal. See the note above.</td></tr>
+<tr><td><strong><a href="https://github.com/TencentCloud/cluster-api-provider-tencent">Tencent Cloud</a></strong></td>
+<td><span class="pill grey">Unmaintained · managed&#8209;only</span></td><td>&mdash;</td><td>none</td>
+<td colspan="5">Last pushed 2022-10-24. Exposes only <code>tkeclusters</code> and
+<code>tkemanagedmachinepools</code> — a managed-TKE provider, not a self-managed infrastructure provider.
+Absent from clusterctl's registry.</td></tr>
+<tr><td><strong><a href="https://github.com/HuaweiCloudDeveloper/cluster-api-provider-huawei">Huawei Cloud <em>(repo as listed)</em></a></strong></td>
+<td><span class="pill grey">Empty shell</span></td><td>&mdash;</td><td>none</td>
+<td colspan="5">0 stars, one path in its tree, no code. clusterctl points instead at
+<a href="https://github.com/huaweicloud-samples/cloudnative-cluster-api-provider-huawei">huaweicloud-samples/cloudnative-cluster-api-provider-huawei</a>,
+which is the row benchmarked above.</td></tr>
+</tbody></table></div>
+<p class="note">Hook columns: <span class="h-yes">yes</span> = the provider cannot do it, the hook is required ·
+<span class="h-no">no</span> = the provider already does it, the hook is unnecessary ·
+<span class="h-unk">unverified</span> = plausible but the cloud's user-data ceiling was not measured ·
+<span class="h-na">n/a</span> = the provider cannot reach the point where hooks run.
+RHCOS artifact availability is read from <code>installer/data/data/coreos/coreos-rhel-9.json</code> at commit
+<code>bde084b0d0</code>, stream <code>rhcos-4.21</code>. Ignition platform IDs are from
+<code>coreos/ignition/docs/supported-platforms.md</code>.</p>
+
+<h2>Bootstrap-data handling, provider by provider</h2>
+<p>Cluster API's bootstrap Secret carries a <code>format</code> key. A provider either branches on it or
+ignores it and writes the bytes into the cloud's user-data channel verbatim. <strong>Passing them through
+verbatim is not a defect</strong> — for Ignition it is exactly the right behaviour, and it is why most of
+this ecosystem works with the proposal without any provider change at all.</p>
+<div class="scroll"><table><thead><tr><th>Provider</th><th>Last push</th><th>Stars</th>
+<th>Reads the bootstrap <code>format</code> key?</th><th>Offload path for an oversized config</th>
+</tr></thead><tbody>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-aws">AWS</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-aws</span></td><td>2026-11-03</td><td>730</td>
+<td>yes — <code>AWSMachine.spec.ignition</code>, <code>ignition.storageType</code></td><td>native — <code>AWSCluster.spec.s3Bucket</code></td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-azure">Azure</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-azure</span></td><td>2026-11-06</td><td>342</td>
+<td>partial — ignition referenced in tree; <code>customData</code> passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-gcp">GCP</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-gcp</span></td><td>2026-11-05</td><td>232</td>
+<td>no — bootstrap bytes passed to instance metadata verbatim</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-vsphere">vSphere</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-vsphere</span></td><td>2026-11-04</td><td>420</td>
+<td>yes — ignition handled alongside cloud-init</td><td>n/a — guestinfo</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-ibmcloud">IBM Cloud</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-ibmcloud</span></td><td>2026-11-05</td><td>67</td>
+<td>yes — <code>pkg/bootstrap/ignition</code></td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/nutanix-cloud-native/cluster-api-provider-nutanix">Nutanix</a></strong><br><span class="src">nutanix-cloud-native/cluster-api-provider-nutanix</span></td><td>2026-11-04</td><td>51</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-openstack">OpenStack</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-openstack</span></td><td>2026-11-03</td><td>373</td>
+<td>no — bootstrap bytes passed through; config drive available</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/oracle/cluster-api-provider-oci">OCI</a></strong><br><span class="src">oracle/cluster-api-provider-oci</span></td><td>2026-10-26</td><td>56</td>
+<td>no — base64 into instance metadata (<code>cloud/scope/machine.go:353</code>)</td><td>none — OCI caps metadata at 32,000 bytes</td></tr>
+<tr><td><strong><a href="https://github.com/syself/cluster-api-provider-hetzner">Hetzner</a></strong><br><span class="src">syself/cluster-api-provider-hetzner</span></td><td>2026-11-05</td><td>1140</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/ionos-cloud/cluster-api-provider-proxmox">Proxmox</a></strong><br><span class="src">ionos-cloud/cluster-api-provider-proxmox</span></td><td>2026-11-03</td><td>497</td>
+<td>yes — branches on <code>ignition.FormatIgnition</code> (<code>internal/service/vmservice/bootstrap.go:90</code>)</td><td>n/a — snippet written to Proxmox storage</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-digitalocean">DigitalOcean</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-digitalocean</span></td><td>2026-10-26</td><td>120</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/linode/cluster-api-provider-linode">Akamai / Linode</a></strong><br><span class="src">linode/cluster-api-provider-linode</span></td><td>2026-11-02</td><td>35</td>
+<td>no — bootstrap bytes passed through</td><td>object-store primitives exist (<code>LinodeObjectStorageBucket</code>/<code>Key</code>) but are not wired to bootstrap data</td></tr>
+<tr><td><strong><a href="https://github.com/kubernetes-sigs/cluster-api-provider-cloudstack">CloudStack</a></strong><br><span class="src">kubernetes-sigs/cluster-api-provider-cloudstack</span></td><td>2026-10-17</td><td>45</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/outscale/cluster-api-provider-outscale">Outscale</a></strong><br><span class="src">outscale/cluster-api-provider-outscale</span></td><td>2026-11-04</td><td>10</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/ionos-cloud/cluster-api-provider-ionoscloud">IONOS Cloud</a></strong><br><span class="src">ionos-cloud/cluster-api-provider-ionoscloud</span></td><td>2026-11-02</td><td>17</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+<tr><td><strong><a href="https://github.com/huaweicloud-samples/cloudnative-cluster-api-provider-huawei">Huawei Cloud</a></strong><br><span class="src">huaweicloud-samples/cloudnative-cluster-api-provider-huawei</span></td><td>2025-05-05</td><td>8</td>
+<td>no — bootstrap bytes passed through</td><td>none</td></tr>
+</tbody></table></div>
+
+<h2>Where the proposal is validated</h2>
+
+<h3>The four hooks are the right four</h3>
+<p>Each hook maps onto a gap that is structural rather than incidental to one cloud:</p>
+<ul>
+<li><strong><code>infraReady</code> — needed by 16 of 16.</strong> Cluster API's contract ends at
+<code>Cluster.spec.controlPlaneEndpoint</code>: an address, not a name. OpenShift needs
+<code>api.&lt;cluster&gt;.&lt;domain&gt;</code> and <code>api-int</code> to resolve before the control plane
+comes up. No provider in this set creates those records, and none has a field to ask for them. Separately,
+only five of sixteen can express the machine-config-server listener on port 22623 declaratively — AWS
+(<code>AdditionalListeners</code>), Azure (<code>AdditionalAPIServerLBPorts</code>), OpenStack
+(<code>additionalPorts</code>), Hetzner (<code>extraServices</code>) and Linode (<code>additionalPorts</code>).
+Five model a load balancer with no way to add a listener; six model no load balancer at all.</li>
+<li><strong><code>postProvision</code> — needed by 16 of 16.</strong> <code>*.apps</code> publication and
+filling a backend set both require control-plane addresses, which do not exist until machines have booted.
+No provider offers a phase here.</li>
+<li><strong><code>preDestroy</code> — needed by 16 of 16, and it is the one most likely to be
+under-appreciated.</strong> Everything the other hooks create is unowned by a Cluster API object. Deleting
+the <code>Cluster</code> removes none of it. Without this hook, every install on every provider leaks.</li>
+<li><strong><code>ignitionReady</code> — genuinely conditional, and the proposal is right to make it
+conditional.</strong> AWS does not need it: CAPA stages an oversized config itself through
+<code>AWSCluster.spec.s3Bucket</code>. Proxmox and vSphere do not need it: neither writes the config into a
+size-capped metadata field. OCI does need it, for a measured reason — CAPOCI base64-encodes user data into
+instance metadata (<code>cloud/scope/machine.go:353</code>) and OCI caps that at 32,000 bytes.</li>
+</ul>
+
+<h3>The payload shape asks for nothing unusual</h3>
+<p>Every benchmarked provider already ships the two artifacts <code>layout.customResource</code> and the
+payload's <code>metadata.yaml</code> name, built by a release process that exists for clusterctl. The
+proposal adds a descriptor beside them; it does not ask a provider to change how it releases.</p>
+
+<h2>Risks and open questions this benchmark surfaced</h2>
+
+<div class="card risk">
+<h4>1. The consent gate guards a capability that will be the norm, not the exception</h4>
+<p><code>bootstrapIgnitionStaging: Allowed</code> exists so a cluster creator consciously permits a partner
+hook to handle day-0 secret material. The benchmark says <strong>one provider in sixteen has a native
+offload path</strong>, and it is the one provider the installer already embeds. For most clouds the need
+for <code>ignitionReady</code> is a property of the cloud's metadata ceiling, not a choice anyone is making.</p>
+<p>A gate that every non-AWS install must tick is a gate that stops carrying information, and it is an API
+field OpenShift can never remove. Worth deciding deliberately rather than by default.</p>
+</div>
+
+<div class="card risk">
+<h4>2. Six providers model no load balancer at all — so where does <code>controlPlaneEndpoint</code> come from?</h4>
+<p>vSphere, Nutanix, Proxmox, CloudStack, IONOS and Huawei leave the API endpoint to the cluster author,
+conventionally kube-vip running on the control-plane machines. <code>infraReady</code> runs after
+infrastructure is ready, but <code>controlPlaneEndpoint</code> must be populated <em>before</em> the provider
+marks the cluster ready. On these providers that value has to come from somewhere the proposal does not
+currently name — the cluster template, presumably, with a pre-allocated address.</p>
+<p>This is an ordering question, not a missing hook. It should be answered in the EP before a partner on one
+of these platforms discovers it.</p>
+</div>
+
+<div class="card risk">
+<h4>3. The hook contract is an exec ABI with no version negotiation</h4>
+<p><code>openshift.yaml</code> carries <code>compatibility.kubernetes</code> and nothing that describes the
+hook contract's own version. The phases, their environment variables and
+<code>bootstrapOutputPath</code> are a binary interface between OpenShift and partner-authored shell. Adding
+a fifth phase, renaming an environment variable or changing when a phase runs is a compatibility event with
+no mechanism to detect or refuse it — an old payload on a new installer will simply not be called.</p>
+<p>This benchmark found no need for a fifth phase, which is reassuring but not a guarantee. A declared
+contract version in the descriptor is cheap now and expensive later.</p>
+</div>
+
+<div class="card risk">
+<h4>4. RHCOS, not Cluster API, is what limits reach</h4>
+<p>Nine of sixteen clouds have an Ignition platform provider but no published RHCOS artifact: OCI,
+DigitalOcean, Linode, CloudStack, Hetzner, Outscale and Proxmox among them. For each of these the Cluster
+API side of the proposal is complete and the install still cannot happen. This is the generic
+artifact-override work, and this benchmark is evidence that it unblocks <strong>seven</strong> clouds, not
+one — a materially stronger argument than the OCI case alone.</p>
+</div>
+
+<div class="card risk">
+<h4>5. Two clouds are outside the model and no OpenShift work can bring them in</h4>
+<p>IONOS Cloud and Huawei Cloud have no Ignition platform provider. RHCOS cannot read a configuration on
+them through any channel, so neither the payload nor the hooks ever get a chance to run. Bringing them in
+means contributing a platform provider to <code>coreos/ignition</code> first. Worth stating in the EP as the
+lower bound of the mechanism's reach, so that reach is not overclaimed.</p>
+</div>
+
+<h2>Open questions, for decision</h2>
+<div class="q"><span class="num">1</span><div>Should <code>bootstrapIgnitionStaging</code> remain a
+per-cluster consent gate when fifteen of sixteen providers will require it, or should the consent attach to
+the payload — signed, reviewed once by the partner's release process — rather than to each install?</div></div>
+<div class="q"><span class="num">2</span><div>For a provider that models no load balancer, what is the
+documented source of <code>Cluster.spec.controlPlaneEndpoint</code>, and does the EP need to say so
+explicitly rather than leaving it to the cluster template?</div></div>
+<div class="q"><span class="num">3</span><div>Should <code>openshift.yaml</code> declare a hook-contract
+version distinct from <code>compatibility.kubernetes</code>, so that a future phase change is a detectable
+incompatibility rather than a silent no-op?</div></div>
+<div class="q"><span class="num">4</span><div>Does the generic RHCOS artifact-override work get re-scoped
+and re-prioritised on the evidence that it unblocks seven clouds rather than OCI alone?</div></div>
+<div class="q"><span class="num">5</span><div>Should the EP state the Ignition-platform requirement as an
+explicit precondition, naming IONOS and Huawei as currently out of reach, so the mechanism's limits are on
+the record?</div></div>
+
+<h2>Method, and what was not done</h2>
+<ul>
+<li>Provider API surface was read from each repository's <code>api/&lt;version&gt;/*_types.go</code> and
+shared <code>types.go</code>, fetched at <code>HEAD</code> of the default branch on 2026-11-06. Thirty-two
+type files plus eleven shared type files.</li>
+<li>Repository trees were enumerated through the GitHub trees API to locate CRD bases and bootstrap-handling
+source; CRD kinds were derived from <code>config/crd/bases/</code> filenames.</li>
+<li>RHCOS artifact availability is from the installer clone, not from documentation.</li>
+<li><strong>Not done, and the gaps are marked in the table rather than guessed:</strong> the user-data size
+ceiling was measured for OCI only (32,000 bytes, from the pilot) and inferred structurally for AWS. The
+other fourteen are recorded as <em>unverified</em>. Establishing each cloud's real ceiling is the one piece
+of research that would convert most of the <code>ignitionReady</code> column from a hypothesis into a fact.</li>
+<li>No provider was built, run or installed against. This is an API-surface benchmark, not a test result.</li>
+<li>Nothing in the enhancement proposal, the deck or any plan version was modified.</li>
+</ul>
+
+</div></body></html>
