@@ -542,7 +542,7 @@
     <b>Platform External · Day 0</b>
     <span class="section" id="section-label">Enhancement proposal</span>
   </div>
-  <div class="counter" id="counter">01 / 18</div>
+  <div class="counter" id="counter">01 / 20</div>
 </header>
 
 <main class="deck" id="deck">
@@ -759,7 +759,7 @@
 
     <p class="body">The EP states the departure in three parts, and nothing else changes. <strong>Delivery</strong> becomes an OCI image, because paths have no publication, pinning, mirroring or authentication story and an image has all of them already. <strong>The payload describes itself</strong>, so the cluster creator wires no paths and an undeclared executable is rejected rather than merely noticed. <strong>Templates and day-0 manifests travel with the provider</strong>, as two trees, because they have different destinations and different lifetimes.</p>
 
-    <p class="callout ocp"><strong>Everything the pilot proved carries over unchanged.</strong> The hook contract, the no-credentials boundary, the wrapper-script escape hatch, the single-object extra-manifest rule, teardown verified on a <em>second</em> cluster, and the three shared-code touches. The payload changes how a provider is delivered, not what the installer does with it — and Open Question 1 is now only whether the local-path form stays in the tree at all.</p>
+    <p class="callout ocp"><strong>Everything the pilot proved carries over unchanged.</strong> The hook contract, the no-credentials boundary, the single-object extra-manifest rule, teardown verified on a <em>second</em> cluster, and the three shared-code touches. One thing does <em>not</em> carry over, and its disappearance is a simplification: the pilot's wrapper script existed only to rename a controller flag the installer insisted on injecting, and the payload now owns that command line outright. The payload changes how a provider is delivered, not what the installer does with it — and Open Question 1 is now only whether the local-path form stays in the tree at all.</p>
   </div>
 </section>
 
@@ -776,12 +776,9 @@
     <span class="k">platformName</span>: foo
     <span class="k">cloudControllerManager</span>: External
     <span class="k">clusterAPI</span>:
-      <span class="k">name</span>: foo
-      <span class="k">controller</span>:
-        <span class="k">image</span>:
-          <span class="k">ref</span>: quay.io/foo/openshift-capfoo@sha256:...
-      <span class="c"># everything below defaults beneath</span>
-      <span class="c"># &lt;install-dir&gt;/capi-installer</span>
+      <span class="k">payloadImage</span>: quay.io/foo/openshift-capfoo@sha256:...
+      <span class="c"># no provider name, no controller flags, no</span>
+      <span class="c"># paths: all of that is the payload's</span>
       <span class="k">variables</span>:
         <span class="k">FOO_REGION</span>: us-east-1</pre>
       </div>
@@ -791,7 +788,7 @@
           <li><code>bin/controller</code> — the provider binary</li>
           <li><code>infrastructure-components.yaml</code> — CRDs, RBAC, webhooks</li>
           <li><code>metadata.yaml</code> — clusterctl contract version, verbatim</li>
-          <li><code>openshift.yaml</code> — layout + Kubernetes compatibility range</li>
+          <li><code>openshift.yaml</code> — the descriptor: <code>spec.capi</code> (controller, its args, components, templates) and <code>spec.openshift</code> (manifests, hooks), under a compatibility range</li>
           <li><code>cluster-api/</code> — templates for the local control plane</li>
           <li><code>manifests/</code> — day-0 templates for the installed cluster</li>
           <li><code>hooks/</code> — the lifecycle programs the payload declares</li>
@@ -799,7 +796,7 @@
       </div>
     </div>
 
-    <p class="callout"><strong>Everything defaults.</strong> A conforming payload needs no path configuration: <code>capiInstallerPath</code> defaults to <code>&lt;install-dir&gt;/capi-installer</code> and every other path defaults beneath it. Hooks are filled in per phase from the payload's own layout; setting one in install-config overrides that phase and only that phase.</p>
+    <p class="callout"><strong>Everything defaults.</strong> A conforming payload needs no path configuration: <code>capiInstallerPath</code> defaults to <code>&lt;install-dir&gt;/capi-installer</code> and every other path defaults beneath it. Hooks come from the descriptor and only from the descriptor — the pilot let install-config override a phase, and the proposal removes that: a cluster creator who can substitute a hook program can substitute the provider.</p>
   </div>
 </section>
 
@@ -832,7 +829,7 @@
       </tbody>
     </table>
 
-    <p class="callout"><strong>The residue is one small file.</strong> <code>metadata.yaml</code> says nothing about Kubernetes versions, and nothing about where the hooks or the controller binary live — neither concept exists upstream. <code>openshift.yaml</code> carries exactly that, shaped deliberately like <code>metadata.yaml</code> so the two read as a pair.</p>
+    <p class="callout"><strong>The residue is one small file.</strong> <code>metadata.yaml</code> says nothing about Kubernetes versions, and nothing about where the hooks or the controller binary live — neither concept exists upstream. <code>openshift.yaml</code> carries exactly that, shaped deliberately like <code>metadata.yaml</code> so the two read as a pair — and split into <code>spec.capi</code> and <code>spec.openshift</code>, so a partner can see at a glance which half is upstream Cluster API and which half is OpenShift's alone.</p>
   </div>
 </section>
 
