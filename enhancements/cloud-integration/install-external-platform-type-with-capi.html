@@ -1,0 +1,1310 @@
+<title>Platform External with Cluster API — Day 0</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  /* Design plan
+     Colour : cool graphite neutrals; two semantic hues only —
+              blue = OpenShift / installer, amber = partner.
+     Type   : Archivo (display) + IBM Plex Sans (body) + IBM Plex Mono (data)
+     Layout : one slide at a time on a centred stage, chrome top and bottom.
+     Sibling deck: hypershift-external-platform-deck.html — same system, day-2/managed. */
+  :root {
+    --bg: #F1F4F7;
+    --bg-deep: #E7EBF0;
+    --surface: #FFFFFF;
+    --ink: #11151B;
+    --muted: #59636F;
+    --faint: #8B96A3;
+    --line: #D6DCE4;
+    --line-strong: #B4BEC9;
+    --ocp: #1C5F9E;
+    --ocp-soft: #E2EDF7;
+    --ext: #9A5808;
+    --ext-soft: #F6ECDC;
+    --ok: #2B6A4D;
+    --bad: #A23131;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 10px 28px rgba(16,24,40,.06);
+
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --display: "Archivo", "IBM Plex Sans", -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --fs-h1: clamp(38px, 6.6vw, 86px);
+    --fs-h2: clamp(25px, 3.3vw, 44px);
+    --fs-h3: clamp(17px, 1.7vw, 22px);
+    --fs-lede: clamp(15px, 1.45vw, 20px);
+    --fs-body: clamp(13.5px, 1.12vw, 16.5px);
+    --fs-small: clamp(11.5px, .92vw, 13.5px);
+    --fs-micro: clamp(10px, .78vw, 11.5px);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0C0F13;
+      --bg-deep: #10151B;
+      --surface: #151A21;
+      --ink: #E6EAF0;
+      --muted: #97A2B0;
+      --faint: #6F7B8A;
+      --line: #242C36;
+      --line-strong: #39434F;
+      --ocp: #6FAFE4;
+      --ocp-soft: #12283C;
+      --ext: #D8A055;
+      --ext-soft: #2C2214;
+      --ok: #6BBF95;
+      --bad: #DE8282;
+      --shadow: 0 1px 2px rgba(0,0,0,.45), 0 10px 28px rgba(0,0,0,.35);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0C0F13;
+    --bg-deep: #10151B;
+    --surface: #151A21;
+    --ink: #E6EAF0;
+    --muted: #97A2B0;
+    --faint: #6F7B8A;
+    --line: #242C36;
+    --line-strong: #39434F;
+    --ocp: #6FAFE4;
+    --ocp-soft: #12283C;
+    --ext: #D8A055;
+    --ext-soft: #2C2214;
+    --ok: #6BBF95;
+    --bad: #DE8282;
+    --shadow: 0 1px 2px rgba(0,0,0,.45), 0 10px 28px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--fs-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+
+  /* ---------- chrome ---------- */
+
+  .topbar {
+    position: relative;
+    flex: none;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    padding-block: 13px 9px;
+    border-bottom: 1px solid var(--line);
+    min-width: 0;
+  }
+  .progress {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .progress span {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: var(--ocp);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform .32s cubic-bezier(.32,.72,0,1);
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .brand b {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: var(--fs-small);
+    letter-spacing: -.01em;
+    white-space: nowrap;
+  }
+  .brand .section {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    text-transform: uppercase;
+    letter-spacing: .13em;
+    color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .counter {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .controls {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-block: 9px 13px;
+    border-top: 1px solid var(--line);
+  }
+  .hint {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--faint);
+    letter-spacing: .04em;
+  }
+  .nav { display: flex; gap: 8px; }
+  .btn {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s, opacity .15s;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--line-strong); background: var(--bg-deep, var(--surface)); }
+  .btn:focus-visible { outline: 2px solid var(--ocp); outline-offset: 2px; }
+  .btn:disabled { opacity: .35; cursor: default; }
+
+  /* ---------- stage ---------- */
+
+  .deck {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-block: clamp(16px, 3vh, 36px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .26s ease, visibility .26s;
+  }
+  @supports (justify-content: safe center) {
+    .slide { justify-content: safe center; }
+  }
+  .slide.is-active { opacity: 1; visibility: visible; }
+
+  .inner {
+    width: 100%;
+    max-width: 1120px;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(12px, 2.1vh, 24px);
+    min-width: 0;
+  }
+
+  /* ---------- type ---------- */
+
+  .eyebrow {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    text-transform: uppercase;
+    letter-spacing: .16em;
+    color: var(--ocp);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 18px;
+    height: 1px;
+    background: currentColor;
+    flex: none;
+  }
+  .eyebrow.ext { color: var(--ext); }
+
+  h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: var(--fs-h1);
+    line-height: .94;
+    letter-spacing: -.035em;
+    text-wrap: balance;
+  }
+  h2 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: var(--fs-h2);
+    line-height: 1.06;
+    letter-spacing: -.025em;
+    text-wrap: balance;
+    max-width: 22ch;
+  }
+  h2.wide { max-width: 30ch; }
+  h3 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: var(--fs-h3);
+    letter-spacing: -.015em;
+  }
+
+  .lede {
+    margin: 0;
+    font-size: var(--fs-lede);
+    line-height: 1.45;
+    color: var(--muted);
+    max-width: 62ch;
+  }
+  p { margin: 0; }
+  .body { font-size: var(--fs-body); color: var(--muted); max-width: 68ch; }
+  .body strong, .lede strong { color: var(--ink); font-weight: 600; }
+  .small { font-size: var(--fs-small); }
+
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  code {
+    background: var(--bg-deep, rgba(127,127,127,.1));
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .08em .34em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  /* ---------- layout helpers ---------- */
+
+  .cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(14px, 2vw, 26px); }
+  .cols-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(12px, 1.6vw, 20px); }
+  .cols-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(10px, 1.3vw, 16px); }
+  .cols-2 > *, .cols-3 > *, .cols-4 > * { min-width: 0; }
+
+  @media (max-width: 980px) {
+    .cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 820px) {
+    .cols-2, .cols-3, .cols-4 { grid-template-columns: minmax(0, 1fr); }
+    .hint { display: none; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: clamp(14px, 1.5vw, 20px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .panel.ocp { border-top: 2px solid var(--ocp); }
+  .panel.ext { border-top: 2px solid var(--ext); }
+  .panel.dim { border-top: 2px solid var(--line-strong); opacity: .72; }
+  .panel > h3 { font-size: var(--fs-small); font-family: var(--mono); font-weight: 500; text-transform: uppercase; letter-spacing: .12em; }
+  .panel.ocp > h3 { color: var(--ocp); }
+  .panel.ext > h3 { color: var(--ext); }
+  .panel.dim > h3 { color: var(--faint); }
+
+  ul.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: var(--fs-small); color: var(--muted); }
+  ul.plain li { position: relative; padding-left: 13px; line-height: 1.42; }
+  ul.plain li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: .58em;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--line-strong);
+  }
+  .panel.ocp ul.plain li::before { background: var(--ocp); opacity: .55; }
+  .panel.ext ul.plain li::before { background: var(--ext); opacity: .55; }
+
+  /* ---------- code ---------- */
+
+  pre.code {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    line-height: 1.6;
+    color: var(--ink);
+    overflow-x: auto;
+    max-width: 100%;
+    tab-size: 2;
+  }
+  pre.code .c { color: var(--faint); }
+  pre.code .k { color: var(--ocp); }
+  pre.code .v { color: var(--ext); }
+  .code-label {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 7px;
+  }
+
+  /* ---------- figures ---------- */
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .fig-scroll { overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
+  .fig-scroll svg { display: block; width: 100%; height: auto; max-height: min(58vh, 600px); }
+  .fig-scroll.wide svg { min-width: 700px; }
+  figcaption {
+    font-size: var(--fs-small);
+    color: var(--muted);
+    line-height: 1.45;
+    max-width: 76ch;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 12px; height: 3px; border-radius: 2px; flex: none; }
+  .swatch.ocp { background: var(--ocp); }
+  .swatch.ext { background: var(--ext); }
+  .swatch.mut { background: var(--faint); }
+
+  /* ---------- flow chips ---------- */
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    min-width: 0;
+  }
+  .chip {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 5px 9px;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+  .chip.ocp { border-color: var(--ocp); color: var(--ocp); background: var(--ocp-soft); }
+  .chip.ext { border-color: var(--ext); color: var(--ext); background: var(--ext-soft); }
+  .chip.dim { color: var(--faint); border-style: dashed; }
+  .arw { color: var(--faint); font-family: var(--mono); }
+  .flow-label {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: var(--fs-micro);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    flex: 0 0 100%;
+    margin-bottom: 2px;
+  }
+
+  /* ---------- misc ---------- */
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    border: 1px solid var(--ocp);
+    color: var(--ocp);
+    border-radius: 100px;
+    padding: 3px 10px;
+    white-space: nowrap;
+  }
+  .pill.ext { border-color: var(--ext); color: var(--ext); }
+  .pill.dim { border-color: var(--line-strong); color: var(--faint); }
+  .pill.ok { border-color: var(--ok); color: var(--ok); }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--faint);
+    letter-spacing: .04em;
+  }
+  .callout {
+    border-left: 2px solid var(--ext);
+    padding: 2px 0 2px 14px;
+    font-size: var(--fs-small);
+    color: var(--muted);
+    max-width: 70ch;
+  }
+  .callout.ocp { border-left-color: var(--ocp); }
+  .callout strong { color: var(--ink); }
+  .hl { color: var(--ink); font-weight: 600; }
+  .num {
+    font-family: var(--mono);
+    font-size: var(--fs-small);
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  table.tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-small);
+    color: var(--muted);
+  }
+  table.tbl th, table.tbl td {
+    text-align: left;
+    vertical-align: top;
+    padding: 9px 12px 9px 0;
+    border-bottom: 1px solid var(--line);
+    line-height: 1.42;
+  }
+  table.tbl th {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--faint);
+    border-bottom-color: var(--line-strong);
+    white-space: nowrap;
+  }
+  table.tbl td strong { color: var(--ink); font-weight: 600; }
+  table.tbl tr:last-child td { border-bottom: none; }
+
+  /* ---------- cover ---------- */
+
+  .cover-bg {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(var(--line) 1px, transparent 1px);
+    background-size: 22px 22px;
+    opacity: .55;
+    pointer-events: none;
+    mask-image: radial-gradient(ellipse 90% 70% at 30% 40%, #000 20%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 30% 40%, #000 20%, transparent 78%);
+  }
+  .cover .inner { position: relative; gap: clamp(16px, 2.6vh, 30px); }
+  .cover h1 { max-width: 15ch; }
+  .cover .lede { max-width: 52ch; }
+  .title-rule {
+    width: 64px;
+    height: 2px;
+    background: var(--ink);
+    opacity: .8;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+  }
+  @media (max-width: 520px) {
+    .brand .section { display: none; }
+    h2 { max-width: none; }
+    .slide { padding-block: 10px; }
+  }
+</style>
+
+<header class="topbar">
+  <div class="progress" aria-hidden="true"><span id="bar"></span></div>
+  <div class="brand">
+    <b>Platform External · Day 0</b>
+    <span class="section" id="section-label">Enhancement proposal</span>
+  </div>
+  <div class="counter" id="counter">01 / 18</div>
+</header>
+
+<main class="deck" id="deck">
+
+<section class="slide cover is-active" id="slide-1" aria-hidden="false">
+  <div class="cover-bg" aria-hidden="true"></div>
+  <div class="inner">
+    <p class="eyebrow">Enhancement proposal · provisional</p>
+    <h1>Install platform External with a partner Cluster API provider</h1>
+    <div class="title-rule"></div>
+    <p class="lede">Platform External gives a provider a supported place for their own cloud components. This extends the same contract to day 0: the installer runs the provider's own Cluster API controller — out-of-tree, out-of-payload, on the partner's cadence.</p>
+    <div class="meta">
+      <span>author @mtulio</span>
+      <span>reviewers @patrickdillon · @JoelSpeed · @elmiko</span>
+      <span>approver @patrickdillon · API @JoelSpeed</span>
+      <span>OCPSTRAT-3724 · SPLAT-2929</span>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="slide-2" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Motivation</p>
+    <h2 class="wide">Platform External already integrates a provider's cloud. Day 0 is the part it leaves out.</h2>
+    <p class="lede"><code>platform: external</code> is the supported way a provider integrates OpenShift with their own components — their CCM, their CSI driver, their cloud — with no provider code in the release payload and no in-tree platform for Red Hat to maintain. What it specifies today is the <em>running</em> cluster. Installation stays on the agnostic path: the user supplies the infrastructure, and the installer takes it from there.</p>
+
+    <p class="body" style="max-width:74ch">That is a deliberate boundary, and it has held well. The cost of it shows up once a partner already has the automation and still cannot use it.</p>
+
+    <div class="cols-3">
+      <div class="panel ocp">
+        <h3>For the partner</h3>
+        <p class="small body">A working Cluster API provider is of no use at install time, so the provisioning burden lands back on them — as a UPI flow, an Assisted flow, or both.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>For the admin</h3>
+        <p class="small body">A materially different install experience from every integrated platform. Automation and mental model do not carry over.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>For Red Hat</h3>
+        <p class="small body">The alternative is in-tree special cases: permanent maintenance cost, and a ceiling on supported platforms set by team capacity.</p>
+      </div>
+    </div>
+
+    <p class="callout"><strong>OCI is the concrete driver, the gap is general.</strong> Any partner with a working Cluster API provider hits the same wall. <code>OCPSTRAT-1322</code> covers the day-2 half — autoscaling, machine health checks. This is the day-0 half.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-3" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The shape</p>
+    <h2 class="wide">Three parties, one boundary</h2>
+
+    <figure>
+      <div class="fig-scroll wide">
+        <svg viewBox="0 0 1000 392" role="img" aria-label="A shared responsibility diagram in three rows. A horizontal support boundary separates what Red Hat supports, above, from what the provider or integrator supports, below. A vertical divider separates install time, on the left, from the installed cluster, on the right. Top row, above the boundary: install-config feeds openshift-install, which runs a local ephemeral Cluster API control plane and holds no cloud credentials by design, and which installs the OpenShift core components from the release payload on the far side of the divider. Middle row, below the boundary: the CAPI provider with its controller and CRDs; the four hooks, ignitionReady, infraReady, postProvision and preDestroy; and, across the divider, the provider components, its cloud controller manager and CSI driver. Two arrows descend from openshift-install, one into the CAPI provider and one into the hooks, because the installer is what runs both: the hooks are supplied by the payload but are not called by the provider. Bottom row: the partner cloud spans the full width and crosses the divider, because it is the same cloud at install time and afterwards. The CAPI provider, the hooks and the provider components each call down into it. Nothing from the local control plane reaches the installed cluster." style="font-family:var(--sans)">
+          <defs>
+            <marker id="d3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--ocp)"/>
+            </marker>
+            <marker id="d3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--ext)"/>
+            </marker>
+          </defs>
+
+          <line x1="0" y1="165" x2="1000" y2="165" style="stroke:var(--line-strong);stroke-width:1;stroke-dasharray:5 5"/>
+          <line x1="672" y1="30" x2="672" y2="304" style="stroke:var(--line-strong);stroke-width:1;stroke-dasharray:3 5"/>
+
+          <text x="8" y="21" style="fill:var(--ocp);font-family:var(--mono);font-size:10px;letter-spacing:1.6px">RED HAT SUPPORTS</text>
+          <text x="8" y="192" style="fill:var(--ext);font-family:var(--mono);font-size:10px;letter-spacing:1.6px">PROVIDER / INTEGRATOR SUPPORTS</text>
+          <text x="660" y="21" text-anchor="end" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px">install time</text>
+          <text x="684" y="21" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px">installed cluster</text>
+          <text x="660" y="159" text-anchor="end" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px">support boundary</text>
+
+          <rect x="8" y="44" width="136" height="62" rx="8" style="fill:var(--surface);stroke:var(--ocp);stroke-width:1.25"/>
+          <text x="76" y="70" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">install-config</text>
+          <text x="76" y="88" text-anchor="middle" style="fill:var(--muted);font-family:var(--mono);font-size:8.5px">platform.external.clusterAPI</text>
+
+          <line x1="146" y1="75" x2="195" y2="75" style="stroke:var(--ocp);stroke-width:1.25" marker-end="url(#d3a)"/>
+
+          <rect x="200" y="44" width="176" height="62" rx="8" style="fill:var(--ocp-soft);stroke:var(--ocp);stroke-width:1.25"/>
+          <text x="288" y="70" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">openshift-install</text>
+          <text x="288" y="88" text-anchor="middle" style="fill:var(--ocp);font-family:var(--mono);font-size:9px">local CAPI control plane</text>
+
+          <line x1="378" y1="75" x2="695" y2="75" style="stroke:var(--ocp);stroke-width:1.25" marker-end="url(#d3a)"/>
+          <text x="536" y="67" text-anchor="middle" style="fill:var(--muted);font-family:var(--mono);font-size:9.5px">installs</text>
+
+          <rect x="700" y="44" width="292" height="62" rx="8" style="fill:var(--ocp-soft);stroke:var(--ocp);stroke-width:1.25"/>
+          <text x="846" y="70" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">OpenShift core components</text>
+          <text x="846" y="88" text-anchor="middle" style="fill:var(--ocp);font-family:var(--mono);font-size:9px">release payload — CVO, MCO, ingress, …</text>
+
+          <rect x="8" y="114" width="136" height="42" rx="8" style="fill:var(--surface);stroke:var(--line-strong);stroke-width:1;stroke-dasharray:4 4"/>
+          <text x="76" y="132" text-anchor="middle" style="fill:var(--muted);font-size:11px;font-weight:600">no cloud credentials</text>
+          <text x="76" y="147" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:8.5px">held by the installer, by design</text>
+
+          <line x1="265" y1="108" x2="265" y2="199" style="stroke:var(--ocp);stroke-width:1.25" marker-end="url(#d3a)"/>
+          <text x="273" y="146" style="fill:var(--muted);font-family:var(--mono);font-size:9.5px">runs</text>
+
+          <path d="M340,108 V150 H511 V199" fill="none" style="stroke:var(--ocp);stroke-width:1.25" marker-end="url(#d3a)"/>
+          <text x="519" y="192" style="fill:var(--muted);font-family:var(--mono);font-size:9.5px">runs</text>
+
+          <rect x="190" y="204" width="150" height="74" rx="8" style="fill:var(--ext-soft);stroke:var(--ext);stroke-width:1.25"/>
+          <text x="265" y="236" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">CAPI provider</text>
+          <text x="265" y="254" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:9px">controller + CRDs</text>
+
+          <rect x="356" y="204" width="310" height="74" rx="8" style="fill:var(--surface);stroke:var(--ext);stroke-width:1.25"/>
+          <text x="511" y="226" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">four hooks</text>
+          <text x="511" y="244" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:8.5px">ignitionReady · infraReady · postProvision · preDestroy</text>
+          <text x="511" y="258" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:8px">supplied by the payload</text>
+          <text x="511" y="270" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:8px">run by openshift-install, not by the provider</text>
+
+          <rect x="700" y="204" width="292" height="74" rx="8" style="fill:var(--ext-soft);stroke:var(--ext);stroke-width:1.25"/>
+          <text x="846" y="236" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">provider components</text>
+          <text x="846" y="254" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:9px">CCM, CSI driver, … — out of payload</text>
+
+          <line x1="265" y1="280" x2="265" y2="303" style="stroke:var(--ext);stroke-width:1.25" marker-end="url(#d3b)"/>
+          <line x1="511" y1="280" x2="511" y2="303" style="stroke:var(--ext);stroke-width:1.25;stroke-dasharray:4 4" marker-end="url(#d3b)"/>
+          <line x1="846" y1="280" x2="846" y2="303" style="stroke:var(--ext);stroke-width:1.25" marker-end="url(#d3b)"/>
+
+          <rect x="190" y="308" width="802" height="66" rx="8" style="fill:var(--ext-soft);stroke:var(--ext);stroke-width:1.25"/>
+          <text x="591" y="336" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">partner cloud</text>
+          <text x="591" y="354" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:9px">partner credentials — the same cloud at install time and afterwards</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="swatch ocp"></i> Red Hat supports</span>
+        <span><i class="swatch ext"></i> provider supports</span>
+        <span><i class="swatch mut"></i> absent by design</span>
+      </div>
+      <figcaption>Red Hat supports the release payload and the installer interface the provider plugs into; the provider supports everything it ships, at install time and afterwards — which is why the partner cloud is one row under everything and crosses the install-time divider rather than sitting on one side of it. The installer runs the partner's provider exactly as it runs the providers it embeds, in a control plane that is <strong>local to the installer process and ephemeral</strong> — nothing in it, least of all its Secrets, reaches the installed cluster.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="slide" id="slide-4" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow ext">The decision that matters</p>
+    <h2 class="wide">Local paths proved it. The image is the proposal.</h2>
+    <p class="lede">Both modes are implemented and both ran end to end. They are not two options being offered — they are one pilot and one product.</p>
+
+    <div class="cols-2">
+      <div class="panel dim">
+        <h3>Local paths — the pilot's form</h3>
+        <p class="small body"><code>binaryPath</code> and <code>componentsPath</code> point at a controller binary and a components bundle already on the installer host.</p>
+        <ul class="plain">
+          <li>How the mechanism was first proved, on AWS/CAPA and then on OCI/CAPOCI</li>
+          <li>Awkward for automation: somebody has to put the files there first</li>
+          <li>No digest pinning, no mirroring, no pull authentication</li>
+          <li>Nothing to sign and nothing to version</li>
+        </ul>
+        <p class="small" style="color:var(--bad)"><strong>Not the partner-facing form.</strong> Recorded under <em>Alternatives</em>; retained in the API as developer and CI scaffolding only.</p>
+      </div>
+      <div class="panel ext">
+        <h3>Payload image — the proposal</h3>
+        <p class="small body">One OCI image, published by the partner through their own release process, carrying everything: controller, components, both template trees, hooks, descriptor.</p>
+        <ul class="plain">
+          <li>Pulled over the registry API with <code>pullSecret</code></li>
+          <li>Digest-pinned, mirrorable, works disconnected via <code>imageDigestSources</code></li>
+          <li>Signed and versioned by the partner's existing release process</li>
+          <li>A conforming payload needs <em>no</em> path configuration at all</li>
+        </ul>
+        <p class="small" style="color:var(--ok)"><strong>This is what a partner ships.</strong></p>
+      </div>
+    </div>
+
+    <p class="callout"><strong>The local mode was the transition, not the destination.</strong> It existed to answer "can the installer run a provider it does not embed?" — and once the answer was yes, every remaining question was about delivery: how does a partner publish this, pin it, mirror it, sign it, version it. Those questions have one answer, and that answer is an image.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-5" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow ext">The decision that matters</p>
+    <h2 class="wide">How the pilot turned into the image</h2>
+
+    <figure>
+      <div class="fig-scroll wide">
+        <svg viewBox="0 0 1000 250" role="img" aria-label="A three-stage progression. Stage one: local paths on AWS with the embedded CAPA provider, proving the install-config plumbing. Stage two: local paths on OCI with CAPOCI, proving the installer can run a provider it does not embed. Stage three: the payload image, which answers the delivery questions the first two raised: publishing, pinning, mirroring, signing and versioning." style="font-family:var(--sans)">
+          <defs>
+            <marker id="d5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--faint)"/>
+            </marker>
+          </defs>
+
+          <rect x="8" y="48" width="280" height="118" rx="10" style="fill:var(--surface);stroke:var(--line-strong);stroke-width:1;stroke-dasharray:4 4"/>
+          <text x="24" y="76" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:1.4px">PILOT · STEP 1</text>
+          <text x="24" y="100" style="fill:var(--ink);font-size:14px;font-weight:600">AWS / CAPA, local paths</text>
+          <text x="24" y="122" style="fill:var(--muted);font-size:11.5px">Proves the install-config plumbing,</text>
+          <text x="24" y="138" style="fill:var(--muted);font-size:11.5px">the hooks and the teardown path.</text>
+          <text x="24" y="156" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px">cannot prove the central claim</text>
+
+          <line x1="294" y1="107" x2="344" y2="107" style="stroke:var(--faint);stroke-width:1.25" marker-end="url(#d5a)"/>
+
+          <rect x="350" y="48" width="280" height="118" rx="10" style="fill:var(--surface);stroke:var(--line-strong);stroke-width:1;stroke-dasharray:4 4"/>
+          <text x="366" y="76" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:1.4px">PILOT · STEP 2</text>
+          <text x="366" y="100" style="fill:var(--ink);font-size:14px;font-weight:600">OCI / CAPOCI, local paths</text>
+          <text x="366" y="122" style="fill:var(--muted);font-size:11.5px">A provider the installer cannot</text>
+          <text x="366" y="138" style="fill:var(--muted);font-size:11.5px">embed. The claim is evidenced.</text>
+          <text x="366" y="156" style="fill:var(--faint);font-family:var(--mono);font-size:9.5px">but: how would a partner ship this?</text>
+
+          <line x1="636" y1="107" x2="686" y2="107" style="stroke:var(--faint);stroke-width:1.25" marker-end="url(#d5a)"/>
+
+          <rect x="692" y="38" width="300" height="138" rx="10" style="fill:var(--ext-soft);stroke:var(--ext);stroke-width:1.5"/>
+          <text x="710" y="68" style="fill:var(--ext);font-family:var(--mono);font-size:9.5px;letter-spacing:1.4px">PROPOSAL</text>
+          <text x="710" y="92" style="fill:var(--ink);font-size:14px;font-weight:600">Provider payload image</text>
+          <text x="710" y="114" style="fill:var(--muted);font-size:11.5px">Publish · pin · mirror · sign · version.</text>
+          <text x="710" y="130" style="fill:var(--muted);font-size:11.5px">One artifact, the partner's own</text>
+          <text x="710" y="146" style="fill:var(--muted);font-size:11.5px">release process, no path config.</text>
+          <text x="710" y="166" style="fill:var(--ext);font-family:var(--mono);font-size:9.5px">validated end to end on AWS: create and destroy</text>
+
+          <text x="500" y="218" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:10px">the questions local mode could not answer are all delivery questions</text>
+        </svg>
+      </div>
+      <figcaption>Local paths were never a candidate product form. They were the shortest route to a working install, and the delivery questions they left open — publishing, pinning, mirroring, signing, versioning — are exactly what an OCI image answers for free.</figcaption>
+    </figure>
+
+    <p class="body">The EP states the departure in three parts, and nothing else changes. <strong>Delivery</strong> becomes an OCI image, because paths have no publication, pinning, mirroring or authentication story and an image has all of them already. <strong>The payload describes itself</strong>, so the cluster creator wires no paths and an undeclared executable is rejected rather than merely noticed. <strong>Templates and day-0 manifests travel with the provider</strong>, as two trees, because they have different destinations and different lifetimes.</p>
+
+    <p class="callout ocp"><strong>Everything the pilot proved carries over unchanged.</strong> The hook contract, the no-credentials boundary, the wrapper-script escape hatch, the single-object extra-manifest rule, teardown verified on a <em>second</em> cluster, and the three shared-code touches. The payload changes how a provider is delivered, not what the installer does with it — and Open Question 1 is now only whether the local-path form stays in the tree at all.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-6" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The contract</p>
+    <h2>The whole partner contract is one stanza</h2>
+
+    <div class="cols-2">
+      <div>
+        <p class="code-label">install-config.yaml · image mode</p>
+<pre class="code"><span class="c">platform:</span>
+  <span class="c">external:</span>
+    <span class="k">platformName</span>: foo
+    <span class="k">cloudControllerManager</span>: External
+    <span class="k">clusterAPI</span>:
+      <span class="k">name</span>: foo
+      <span class="k">controller</span>:
+        <span class="k">image</span>:
+          <span class="k">ref</span>: quay.io/foo/openshift-capfoo@sha256:...
+      <span class="c"># everything below defaults beneath</span>
+      <span class="c"># &lt;install-dir&gt;/capi-installer</span>
+      <span class="k">variables</span>:
+        <span class="k">FOO_REGION</span>: us-east-1</pre>
+      </div>
+      <div class="panel ext">
+        <h3>What the image carries</h3>
+        <ul class="plain">
+          <li><code>bin/controller</code> — the provider binary</li>
+          <li><code>infrastructure-components.yaml</code> — CRDs, RBAC, webhooks</li>
+          <li><code>metadata.yaml</code> — clusterctl contract version, verbatim</li>
+          <li><code>openshift.yaml</code> — layout + Kubernetes compatibility range</li>
+          <li><code>cluster-api/</code> — templates for the local control plane</li>
+          <li><code>manifests/</code> — day-0 templates for the installed cluster</li>
+          <li><code>hooks/</code> — the lifecycle programs the payload declares</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="callout"><strong>Everything defaults.</strong> A conforming payload needs no path configuration: <code>capiInstallerPath</code> defaults to <code>&lt;install-dir&gt;/capi-installer</code> and every other path defaults beneath it. Hooks are filled in per phase from the payload's own layout; setting one in install-config overrides that phase and only that phase.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-7" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The contract</p>
+    <h2 class="wide">The payload layout is clusterctl's, not a new one</h2>
+    <p class="lede">Before inventing a format: every Cluster API provider already publishes these, because <code>clusterctl</code> requires them of a provider repository.</p>
+
+    <table class="tbl">
+      <thead>
+        <tr><th>Need</th><th>Existing convention</th><th>Verified in</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>One components bundle</strong></td>
+          <td><code>infrastructure-components.yaml</code> — a single file, which is why the field is a file and not a directory</td>
+          <td>CAPA, CAPOCI</td>
+        </tr>
+        <tr>
+          <td><strong>Declared contract version</strong></td>
+          <td><code>metadata.yaml</code>, mapping each release series to a Cluster API contract (<code>v1beta1</code>, <code>v1beta2</code>)</td>
+          <td>CAPA, CAPOCI — both published today</td>
+        </tr>
+        <tr>
+          <td><strong>Manifest templates</strong></td>
+          <td><code>${VAR}</code> substitution, including <code>${VAR=default}</code> and <code>${VAR:="default"}</code></td>
+          <td>CAPOCI <code>cluster-template.yaml</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="callout"><strong>The residue is one small file.</strong> <code>metadata.yaml</code> says nothing about Kubernetes versions, and nothing about where the hooks or the controller binary live — neither concept exists upstream. <code>openshift.yaml</code> carries exactly that, shaped deliberately like <code>metadata.yaml</code> so the two read as a pair.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-8" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The contract</p>
+    <h2 class="wide">Pulling the payload adds no vendored dependency</h2>
+    <p class="lede">The first implementation vendored a registry client. It worked, and it was removed — the cost was out of proportion to one platform's optional mode.</p>
+
+    <table class="tbl">
+      <thead>
+        <tr><th></th><th>In-process registry client</th><th><code>oc image extract</code> — proposed</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Vendor cost</strong></td>
+          <td><strong>22,861 lines across seven modules</strong>, including <code>docker/cli</code> and <code>containerd/stargz-snapshotter/estargz</code>, to support ~1,500 lines of payload handling</td>
+          <td><strong>None.</strong> <code>go.mod</code>, <code>go.sum</code> and <code>vendor/</code> are unchanged</td>
+        </tr>
+        <tr>
+          <td><strong>Registry behaviour</strong></td>
+          <td>A second client in a binary that already has one — two opinions about mirrors, proxies and auth</td>
+          <td>The same path the installer already uses on the baremetal and RHCOS flows, during this very phase</td>
+        </tr>
+        <tr>
+          <td><strong>Cost taken</strong></td>
+          <td>—</td>
+          <td>A runtime dependency on <code>oc</code>, checked with <code>LookPath</code> before anything is created and only when a payload is configured</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="callout ocp"><strong>One cost turned out to be a feature.</strong> <code>oc image extract</code> normalises every file to <code>0640</code>, so the installer restores the executable bit from <code>openshift.yaml</code> — for the declared controller and hooks, and nothing else. An undeclared program in a payload is now <em>unable</em> to run rather than merely detected after the fact: the descriptor stopped describing what can run and became what makes it able to.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-9" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow ext">The contract</p>
+    <h2>Four hooks, because the installer holds no credentials</h2>
+    <p class="lede">On an integrated platform the installer creates the cluster's DNS itself. Here it cannot, and must not — so it calls out at the same point in the flow.</p>
+
+    <div class="cols-4">
+      <div class="panel ext">
+        <h3>ignitionReady</h3>
+        <p class="small body"><strong>Conditional — most payloads will not declare it.</strong> Only for providers whose controller cannot stage an oversized bootstrap ignition itself.</p>
+        <p class="small body">CAPA can: the installer hands it the full ignition in a Secret and the controller uploads to <code>AWSCluster.spec.s3Bucket</code>. CAPOCI cannot — it base64-encodes user data into instance metadata (<code>cloud/scope/machine.go:353</code>), and <strong>OCI itself</strong> caps that metadata at 32,000 bytes against a <code>bootstrap.ign</code> of hundreds of KB. The cap is the cloud's, not the provider's: no such constant exists in CAPOCI, so the install fails at the cloud API with a message about metadata size and nothing that mentions Ignition.</p>
+        <p class="small body">The only hook whose <em>output</em> the installer reads back, via a <code>bootstrapOutputPath</code> the payload declares — which may not be named <code>bootstrap.ign</code>, so the installer's own artifact is never shadowed. <strong>Gated</strong> by an opt-in install-config field, <code>platform.external.clusterAPI.bootstrapIgnitionStaging</code> — an enum, so &ldquo;signed payloads only&rdquo; is a later third value rather than a second field.</p>
+      </div>
+      <div class="panel ext">
+        <h3>infraReady</h3>
+        <p class="small body">Publishes <code>api</code> and <code>api-int</code>. <strong>The one hook an install cannot do without.</strong></p>
+        <p class="small body">Pointer ignition targets <code>api-int:22623</code>. With no record, bootkube fails at <code>resolve-api-int-url</code> — and the install dies 40 minutes later at the bootstrap timeout.</p>
+        <p class="small body">It is also the earliest point the provider's identifiers — OCIDs, subnet and LB ids — exist at all, so it is the only place the <strong>CCM and CSI config Secrets</strong> can be written. They cannot be day-0 manifests for exactly that reason. Same for load-balancer surface CAPI does not model: CAPOCI has no field for a 22623 listener.</p>
+      </div>
+      <div class="panel ext">
+        <h3>postProvision</h3>
+        <p class="small body">Publishes <code>*.apps</code>. Cannot be done earlier, and the reason is structural: the wildcard points at a load balancer the cluster's <em>own</em> CCM builds, minutes into bootstrap, in response to a day-0 manifest.</p>
+        <p class="small body"><code>Cluster.status.ready</code> is narrower than OpenShift's idea of ready. The split is exact in the reference payload: <code>infraReady</code> creates the MCS listener, <code>postProvision</code> fills its backend set — because that means naming control-plane addresses, which do not exist until the machines boot. Too late for <code>infraReady</code>, too early to be day-2.</p>
+      </div>
+      <div class="panel ext">
+        <h3>preDestroy</h3>
+        <p class="small body">Removes all of it again — DNS, the wildcard, and any staged ignition object. Nothing a hook created is owned by Cluster API, so deleting the <code>Cluster</code> will not touch it — it would outlive the cluster that paid for it. The installer cannot sweep by tag either: it has no SDK for the partner's cloud.</p>
+        <p class="small body">So this hook is a <strong>standing obligation on the other three: every resource a hook creates is removed by <code>preDestroy</code> in the same increment that creates it.</strong> It runs <em>before</em> the delete, and it is the only teardown phase — no post-destroy hook is needed, precisely because Cluster API never knew these objects existed.</p>
+      </div>
+    </div>
+
+    <p class="callout ext"><strong><code>ignitionReady</code> is the one departure from the pilot.</strong> The pilot could not express it as a hook: the bootstrap ignition is final before provisioning begins, and all three existing hooks fire after that. It had to wrap the installer in a three-phase shell script — <code>create ignition-configs</code>, offload by hand, <code>create cluster</code> — which worked only because the asset store re-reads a changed file from disk across process boundaries. Making it a hook collapses that back into one <code>create cluster</code>, <em>and</em> stops the mechanism depending on shared asset-store behaviour every platform relies on: the substitution happens inside the external path only, and <code>&lt;install-dir&gt;/bootstrap.ign</code> is never mutated.</p>
+
+    <p class="callout ocp"><strong>Each hook gets paths, never documents.</strong> <code>OPENSHIFT_INSTALL_INFRA_JSON</code> is the whole mechanism: the installer cannot read a field off an <code>AWSCluster</code> because it has no <code>AWSCluster</code> type and must not acquire one. It copies the object out of its local control plane as JSON and lets the hook dig.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-10" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The flow</p>
+    <h2 class="wide">Where each party acts during an install</h2>
+
+    <div class="flow">
+      <span class="flow-label">create manifests</span>
+      <span class="chip ocp">validate stanza</span><span class="arw">→</span>
+      <span class="chip ext">pull payload</span><span class="arw">→</span>
+      <span class="chip ocp">extract + validate layout</span><span class="arw">→</span>
+      <span class="chip ocp">render both template trees</span>
+    </div>
+
+    <div class="flow">
+      <span class="flow-label">create cluster</span>
+      <span class="chip ext">ignitionReady hook</span><span class="arw">→</span>
+      <span class="chip ocp">local CAPI control plane up</span><span class="arw">→</span>
+      <span class="chip ext">provider starts</span><span class="arw">→</span>
+      <span class="chip ocp">apply Cluster + machines</span><span class="arw">→</span>
+      <span class="chip ext">cloud provisions</span>
+    </div>
+
+    <div class="flow">
+      <span class="flow-label">infrastructureReady</span>
+      <span class="chip ext">infraReady hook</span><span class="arw">→</span>
+      <span class="chip ocp">bootstrap</span><span class="arw">→</span>
+      <span class="chip ext">postProvision hook</span><span class="arw">→</span>
+      <span class="chip ocp">wait for install-complete</span>
+    </div>
+
+    <div class="flow">
+      <span class="flow-label">destroy cluster</span>
+      <span class="chip ocp">read metadata.json</span><span class="arw">→</span>
+      <span class="chip ocp">rebuild local control plane</span><span class="arw">→</span>
+      <span class="chip ext">preDestroy hook</span><span class="arw">→</span>
+      <span class="chip ext">provider deletes</span>
+    </div>
+
+    <p class="callout ocp"><strong>Validation happens before any side effect.</strong> A malformed stanza, a missing path, an unresolvable <code>${VAR}</code>, a non-executable controller, an undeclared executable in the payload — all fail before a single cloud call. <span class="hl">Known limitation:</span> a variable that resolves to a <em>wrong</em> value still passes, and fails at the cloud API instead.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-11" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">The flow</p>
+    <h2>Day 0 manifests are how the cluster gets its cloud</h2>
+    <p class="lede">The provider builds infrastructure. The cluster still needs a CCM, a CSI driver, and a provider-id on every kubelet — and none of that is installer code either.</p>
+
+    <div class="cols-2">
+      <div class="panel ext">
+        <h3>The partner supplies</h3>
+        <ul class="plain">
+          <li>Cloud controller manager — without it, nodes never get their provider-id and <code>Service type=LoadBalancer</code> stays <code>Pending</code> forever</li>
+          <li>CSI driver, if the platform offers storage</li>
+          <li>An ingress <code>Service</code>, because on <code>platform: external</code> the ingress operator selects <code>HostNetwork</code> and creates only a ClusterIP</li>
+        </ul>
+      </div>
+      <div class="panel ocp">
+        <h3>The installer does</h3>
+        <ul class="plain">
+          <li>Renders <code>manifests/</code> from the payload into the day-0 extra-manifest set</li>
+          <li>Publishes a worker ignition Secret, so provider-created machines can boot</li>
+          <li>Refuses a multi-document extra manifest, so a second object fails loudly rather than being silently dropped</li>
+          <li>Generates <strong>no</strong> MachineSets — day-0 workers are Cluster API <code>Machine</code> objects, not a compute pool</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="callout"><strong>A payload install and a hand-written one converge here.</strong> The rendered trees land exactly where hand-written ones would, which is what makes the two CI arms comparable in the first place.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-12" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Teardown</p>
+    <h2>Destroy through the provider that created it</h2>
+    <p class="lede">Cluster metadata records the provider, its source and its hashes, so <code>destroy cluster</code> can rebuild enough of the local control plane to delete through the same code that created everything.</p>
+
+    <div class="cols-2">
+      <div class="panel ocp">
+        <h3>Why it needs a hook too</h3>
+        <p class="small body">Anything a hook created is outside Cluster API's ownership. A hosted zone, a record in a <em>shared</em> public zone, and a load balancer the cluster's own CCM built are all invisible to deleting the <code>Cluster</code>.</p>
+        <p class="small body">The rule on this pilot: <strong>each new resource ships with its teardown in the same change.</strong></p>
+      </div>
+      <div class="panel ext">
+        <h3>State is the contract</h3>
+        <p class="small body">Hooks run minutes or hours apart in separate processes. <code>OPENSHIFT_INSTALL_STATE_DIR</code> is the only channel between them, and <code>preDestroy</code> deletes only what the others recorded creating — <strong>by id and by exact name, never by discovery</strong>.</p>
+        <p class="small body">That matters most for the shared public zone: a filter matching more than intended takes out somebody else's cluster.</p>
+      </div>
+    </div>
+
+    <p class="callout"><strong>Teardown is verified on a <em>second</em> cluster.</strong> Three teardown defects in the pilot were found only by creating a cluster after a previous one had been destroyed. A single create/destroy cycle is not evidence, and the acceptance criteria say so.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-13" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Evidence</p>
+    <h2 class="wide">The AWS arm cannot prove the central claim</h2>
+    <p class="lede">Reviewers should hold the test plan to this standard, because it is the one place where a green job means less than it looks.</p>
+
+    <div class="cols-3">
+      <div class="panel dim">
+        <h3>AWS · local paths</h3>
+        <p class="small body">The installer <strong>embeds CAPA</strong>. A passing run cannot distinguish "ran the binary it was handed" from "ran the binary it already had".</p>
+        <p class="small body">Tests the ergonomics of the mechanism. Does not test the mechanism.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>AWS · payload image</h3>
+        <p class="small body">Different code from the install-config down, so a passing path arm says nothing about it. Its controller is built from CAPA source at a pinned ref rather than copied out of the installer.</p>
+        <p class="small body">Narrows the gap. Does not close it.</p>
+      </div>
+      <div class="panel ext">
+        <h3>OCI · CAPOCI</h3>
+        <p class="small body"><strong>CAPOCI cannot be embedded.</strong> This is the only arm that constitutes evidence for the enhancement's central claim.</p>
+        <p class="small body">Blocked for continuous CI on a published boot image, not on this design.</p>
+      </div>
+    </div>
+
+    <p class="callout ocp"><strong>Evidence to date.</strong> Payload-image mode installed an AWS/CAPA cluster end to end — <code>Install complete!</code> in 38m20s, every cluster operator <code>Available=True</code>, no <code>level=error</code>. One create cycle on one provider: evidence that the mode works, not that it is finished.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-14" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Review</p>
+    <h2>Three changes touch code integrated platforms run</h2>
+    <p class="lede">Everything else is new packages on a path no integrated platform reaches. These three are where review attention belongs.</p>
+
+    <div class="cols-3">
+      <div class="panel ocp">
+        <h3>Unknown-kind fallback</h3>
+        <p class="small body">A user-supplied <code>AWSCluster</code> has no compiled-in Go type, so the scheme rejects it and the pilot falls back to unstructured handling.</p>
+        <p class="small body"><strong>Done carelessly this turns a misspelled <code>kind</code> on an integrated platform from a loud failure into a silent one.</strong> Scoped to the external path and it warns — but the scoping is provisional, not chosen.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>Extra-manifest handling</h3>
+        <p class="small body">Shared asset code in <code>pkg/asset/manifests/</code>. The single-object rule is a deliberate API contract, not a bug.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>CAPI robustness fixes</h3>
+        <p class="small body">Seven bugs this work exposed in shared bootstrap code — including a decode error that echoed a manifest, which can carry a Secret.</p>
+      </div>
+    </div>
+
+    <p class="callout"><strong>Each must demonstrate, not assert.</strong> With the new field unset, behaviour is identical to <code>main</code>; a malformed manifest on an integrated platform still fails loudly. The evidence is a diff, not a sentence in a PR description.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-15" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Risks</p>
+    <h2>Four risks worth naming out loud</h2>
+
+    <div class="cols-2">
+      <div class="panel ext">
+        <h3>A partner binary runs on the installer host</h3>
+        <p class="small body">With the installer's privileges. Path, executable-bit and architecture validation happen first and the SHA-256 is recorded — but that does not make it trusted, and <strong>pretending otherwise would be the real risk.</strong> Same category as an untrusted Terraform provider.</p>
+      </div>
+      <div class="panel ext">
+        <h3>Ignition staging hands a hook the day-0 secrets</h3>
+        <p class="small body">An <code>ignitionReady</code> hook reads the complete <code>bootstrap.ign</code>: MCS TLS key, a CA key, the pull secret, the kubeadmin hash. No other hook sees anything comparable. <strong>No mitigation changes that</strong> — only its blast radius is bounded: bootstrap only, size and SHA-256 logged and never content, and the script ships in the same payload whose controller already runs with the installer's privileges.</p>
+        <p class="small body">The pre-signed URL it mints is equally credential-equivalent. Shortest workable lifetime, deleted at teardown, verified gone rather than assumed — and the teardown record holds the request's <em>identifier</em>, never its URL.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>Support attribution</h3>
+        <p class="small body">An install can now fail inside code Red Hat did not write. Provider name and artifact hashes are in metadata and logs. Whether something stronger than logs is needed is open.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>Partner provider quality is unverified</h3>
+        <p class="small body">Nothing checks that a supplied provider behaves correctly. <strong>Mitigation today: none.</strong> A conformance suite is an open question; the partner validation model is a deliverable of OCPSTRAT-3724 in its own right.</p>
+      </div>
+    </div>
+
+    <p class="callout ocp"><strong>Trust boundary, stated plainly:</strong> the installer validates the payload's <em>structure</em>, not its <em>content</em>. It checks the layout is present and the compatibility range admits this release. It does not inspect, scan or attest the controller, the manifests or the hooks.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-16" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Open questions</p>
+    <h2>What is genuinely undecided</h2>
+    <p class="lede">The payload layout, templating syntax, variable vocabulary and validation strictness are settled. These are not.</p>
+
+    <div class="cols-2">
+      <div class="panel ocp">
+        <h3>Before Dev Preview ships</h3>
+        <ul class="plain">
+          <li><strong>How is the unknown-kind fallback finally scoped?</strong> Restrict to external, validate against the CRDs actually present, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.</li>
+          <li><strong>Do we validate user-supplied providers, and how?</strong> A conformance suite is the obvious answer and nobody has scoped one.</li>
+          <li><strong>How are failure modes surfaced?</strong> Logs only, or a path that explicitly signals the failing component is not Red Hat owned?</li>
+          <li><strong>Teardown before <code>metadata.json</code> exists.</strong> An <code>ignitionReady</code> hook creates cloud objects before the installer has written the metadata <code>destroy cluster</code> reads. A run that dies in between leaves an orphaned object and a live pre-signed request with no record of either. Hook writes its teardown state first, or the installer writes metadata earlier — undecided.</li>
+        </ul>
+      </div>
+      <div class="panel ext">
+        <h3>Before GA</h3>
+        <ul class="plain">
+          <li><strong>Who supplies the ingress and API endpoint addresses?</strong> Three plausible answers, not equivalent, and the platform's own character decides — which argues for permitting more than one.</li>
+          <li><strong>Must partner CCM and CSI tag what they create?</strong> Teardown is not supportable without it.</li>
+          <li><strong>Boot images.</strong> The capability exists in RHCOS; the published artifact does not. Blocks continuous CI for the second provider only.</li>
+          <li><strong>CSR approval.</strong> Pre-dates this work, applies equally to <code>platform: none</code>, has no owner. Only settled point: it is not the installer.</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="callout"><strong>Already closed:</strong> whether the local-path form is partner-facing. It is not — the payload image is the proposed form, and the pilot's local form now sits under <em>Alternatives</em>. What is left of Question 1 is internal: whether the local-path form is removed before GA or kept as scaffolding. <code>controller</code> carries no <code>sourceType</code> discriminator today — it gains one only if a second supply form is ever accepted.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-17" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Graduation</p>
+    <h2 class="wide">Dev Preview → Tech Preview → GA</h2>
+
+    <div class="cols-3">
+      <div class="panel ocp">
+        <h3>Dev Preview</h3>
+        <ul class="plain">
+          <li>Mechanism implemented: API, hooks, metadata, teardown</li>
+          <li>AWS/CAPA installs and destroys unattended</li>
+          <li>Partner contract documented, with an honest statement of limitations</li>
+          <li>CI covers the reference arms</li>
+          <li>No-regression evidence per shared-code change</li>
+          <li><strong>Behind a feature gate</strong></li>
+        </ul>
+      </div>
+      <div class="panel ocp">
+        <h3>Tech Preview</h3>
+        <ul class="plain">
+          <li>Open Questions 1, 2, 5 and 6 have written, agreed answers</li>
+          <li>The hook contract is declared permanent, or declared a bridge</li>
+          <li>Nothing waits on the shared networking EP, which is provisional and has no External owner</li>
+        </ul>
+      </div>
+      <div class="panel ext">
+        <h3>GA</h3>
+        <ul class="plain">
+          <li><strong>A provider that is not embedded installs continuously in CI</strong></li>
+          <li>Partner delivery, validation and support model agreed — recorded once, shared with OCPSTRAT-1322</li>
+          <li>Upgrade, downgrade and skew specified and tested</li>
+          <li>Support procedures and must-gather coverage</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="callout ocp"><strong>Nothing here is installed into the cluster, so there is nothing in it to upgrade.</strong> The partner provider runs only in the installer's local control plane and is gone before the install completes. From the upgrade machinery's point of view the result is an ordinary <code>platform: external</code> cluster.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-18" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Support</p>
+    <h2>An install fails in one of four places, in order</h2>
+
+    <div class="cols-4">
+      <div class="panel ocp">
+        <h3>1 · Validation</h3>
+        <p class="small body">Malformed stanza, missing path, wrong architecture. Fails before any cloud call.</p>
+        <p class="small"><span class="pill">Red Hat</span></p>
+      </div>
+      <div class="panel ext">
+        <h3>2 · Provider start-up</h3>
+        <p class="small body">The controller exits immediately, typically on an unrecognised flag. <code>/healthz</code> never answers.</p>
+        <p class="small body"><strong>The most common first-time failure.</strong></p>
+        <p class="small"><span class="pill ext">Partner</span></p>
+      </div>
+      <div class="panel ext">
+        <h3>3 · Provisioning</h3>
+        <p class="small body"><code>infrastructureReady</code> never becomes true. Detail is in the provider's own logs and status conditions.</p>
+        <p class="small"><span class="pill ext">Partner</span></p>
+      </div>
+      <div class="panel ext">
+        <h3>4 · A hook</h3>
+        <p class="small body">Non-zero exit fails the install with the hook's exit code and its last output lines.</p>
+        <p class="small"><span class="pill ext">Partner</span></p>
+      </div>
+    </div>
+
+    <p class="callout ocp"><strong>Logged by path, source and SHA-256 — never by content.</strong> That rule is what makes attribution possible without turning the install log into a place secrets leak. <code>metadata.json</code> records the external platform and the provider name, so "was this path used?" is answerable in one look.</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-19" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Summary</p>
+    <h2>Red Hat ships the seam, not the provider</h2>
+
+    <p class="lede" style="max-width:64ch">No partner code in the release payload. No cloud credentials in the installer. No provider-specific path anywhere in the design — it has been exercised on two providers, and neither got an exception.</p>
+
+    <div class="cols-3">
+      <div class="panel ocp">
+        <h3>The contract</h3>
+        <p class="small body">One install-config stanza, four hooks, a clusterctl-shaped payload descriptor, and a validation model that checks structure rather than content.</p>
+      </div>
+      <div class="panel ext">
+        <h3>The artifact</h3>
+        <p class="small body">One OCI image the partner publishes, pins, mirrors and signs through their own release process, on their own cadence. <strong>Local paths were the pilot.</strong></p>
+      </div>
+      <div class="panel ocp">
+        <h3>The evidence</h3>
+        <p class="small body">Two providers, two supply modes, teardown proven on a second cluster — and an honest statement that the AWS arms test ergonomics while the OCI arm tests the claim.</p>
+      </div>
+    </div>
+
+    <p class="lede" style="max-width:72ch">A partner integrates without forking the installer and without getting code merged into the payload. Red Hat supports the contract and the mechanism. It does not support any partner's provider — and the design is built so that the line between them is visible in the log.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="controls">
+  <span class="hint">← → · space · swipe</span>
+  <div class="nav">
+    <button class="btn" id="prev" type="button" aria-label="Previous slide">Prev</button>
+    <button class="btn" id="next" type="button" aria-label="Next slide">Next</button>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total = slides.length;
+  var counter = document.getElementById('counter');
+  var bar = document.getElementById('bar');
+  var sectionLabel = document.getElementById('section-label');
+  var prev = document.getElementById('prev');
+  var next = document.getElementById('next');
+  var current = 0;
+
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+
+  function apply(n, sync) {
+    current = Math.max(0, Math.min(total - 1, n));
+    slides.forEach(function (s, k) {
+      var on = k === current;
+      s.classList.toggle('is-active', on);
+      s.setAttribute('aria-hidden', on ? 'false' : 'true');
+    });
+    counter.textContent = pad(current + 1) + ' / ' + pad(total);
+    bar.style.transform = 'scaleX(' + ((current + 1) / total) + ')';
+    prev.disabled = current === 0;
+    next.disabled = current === total - 1;
+    var eb = slides[current].querySelector('.eyebrow');
+    sectionLabel.textContent = eb ? eb.textContent : '';
+    if (sync) {
+      try { history.replaceState(null, '', '#slide-' + (current + 1)); } catch (e) {}
+    }
+  }
+
+  function go(n) { apply(n, true); }
+
+  prev.addEventListener('click', function () { go(current - 1); });
+  next.addEventListener('click', function () { go(current + 1); });
+
+  document.addEventListener('keydown', function (e) {
+    var tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    switch (e.key) {
+      case 'ArrowRight': case 'ArrowDown': case 'PageDown': case ' ':
+        e.preventDefault(); go(current + 1); break;
+      case 'ArrowLeft': case 'ArrowUp': case 'PageUp':
+        e.preventDefault(); go(current - 1); break;
+      case 'Home': e.preventDefault(); go(0); break;
+      case 'End': e.preventDefault(); go(total - 1); break;
+    }
+  });
+
+  var touchX = 0, touchY = 0, tracking = false;
+  document.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    touchX = e.touches[0].clientX;
+    touchY = e.touches[0].clientY;
+    tracking = true;
+  }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchX;
+    var dy = t.clientY - touchY;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      go(dx < 0 ? current + 1 : current - 1);
+    }
+  }, { passive: true });
+
+  function fromHash() {
+    var m = /#slide-(\d+)/.exec(location.hash);
+    if (m) {
+      var n = parseInt(m[1], 10) - 1;
+      if (n >= 0 && n < total) return n;
+    }
+    return 0;
+  }
+
+  window.addEventListener('hashchange', function () {
+    var n = fromHash();
+    if (n !== current) apply(n, false);
+  });
+
+  apply(fromHash(), false);
+})();
+</script>
