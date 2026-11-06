@@ -393,7 +393,7 @@ metadata:
   # such record.
   name: foo
 
-  # Optional, informational, never read to decide behaviour. Build provenance
+  # Optional, informational, never read to proposed behaviour. Build provenance
   # belongs in the image's own OCI labels -- org.opencontainers.image.source
   # and .revision -- which existing tooling reads and image signing covers;
   # these are a declarative fallback for a provider that does not set them.
@@ -492,10 +492,32 @@ spec:
     # Nothing in this tree reaches the installed cluster.
     clusterTemplates: cluster-api/
 
-    # Optional. The provider's own end-to-end suite, so a conformance arm can
-    # run what the partner considers authoritative for their platform rather
-    # than what we guessed. Not run by the installer; see Open Question 5,
-    # which is where the conformance question itself still sits.
+    # RESERVED, AND NOT YET A CONTRACT. Declared here so the shape is taken
+    # before something else claims the name, and so a payload has one place to
+    # say "my platform's authoritative test entry point is here". The installer
+    # never executes it, nothing validates it beyond the path existing, and no
+    # behaviour depends on it in this proposal.
+    #
+    # What it is for: today a Red Hat reviewer assessing a partner's payload
+    # has nothing to point at. A declared entry point is the minimum that makes
+    # "does this provider test itself, and with what" an answerable question
+    # rather than a conversation. If that question ever becomes a gate, this is
+    # where the payload would answer it -- which is a homologation contract and
+    # is deliberately out of scope here.
+    #
+    # Before this is given meaning, two things have to happen in order, and
+    # neither is in this EP's scope. First: find out whether Cluster API has,
+    # or is converging on, a provider conformance standard upstream -- that is
+    # unresearched, not known to be absent, and declaring an OpenShift-specific
+    # shape ahead of one would be the wrong move. Second: decide whose suite it
+    # is. HyperShift's external-platform proposal ships a conformance suite in
+    # its own Go module and makes passing it a graduation gate, so the same
+    # partner may already face one such bar; a second, differently shaped one
+    # would be a cost without an argument.
+    #
+    # args is present for symmetry with spec.capi.controller and because a
+    # suite with no way to be parameterised is the one shape that certainly
+    # cannot be reused. See Open Question 5.
     e2e:
       program: bin/e2e
       args: []
@@ -1300,7 +1322,7 @@ type ClusterAPIProvider struct {
     // +optional
     InfrastructureComponents string `json:"infrastructureComponents,omitempty"`
     // +optional
-    ManifestPath string `json:"manifestPath,omitempty"`
+    ManifestTemplates string `json:"manifestTemplates,omitempty"`
 }
 ```
 
@@ -2029,29 +2051,39 @@ checksum rather than content — carries over as it was proved.
 
 **Add per-platform exceptions for the known partner.** Rejected on principle: platform External exists to fit any provider, and an exception for one invites an exception for every other.
 
-## Open Questions [optional]
+## Open Questions
 
-1. **Where do the CI arms get their payload images, and who rebuilds them?** The supply form is **proposed** — one payload image, no filesystem-path mode — and so are the payload layout, templating syntax, variable vocabulary, compatibility file and validation strictness. What that decision creates is a CI dependency the pilot did not have: every end-to-end arm now needs a published image before it can run, where it previously needed a file copy. This matters most for the OCI/CAPOCI arm, which is the **only** arm that proves the central claim — the installer embeds CAPA, so the AWS arm cannot distinguish running the binary it was handed from running the one it already had. Open: which registry the arms pull from, whether the image is built per-run from source or pinned by digest, who owns the rebuild when CAPOCI releases, and whether a pinned digest is still evidence that an arbitrary partner image works.
-2. **How is the scheme fallback for unknown kinds finally scoped?** Three candidates: restrict to `platform: external`, validate against the CRDs actually present in the payload's components file, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.
-3. **How is the `ignitionReady` contract finally shaped, and should it be gated?**
-   *Proposed:* the installer provides a first-class staging point rather than leaving each
-   partner to wrap the installer in a script and reimplement the same credential hazard.
-   The hook is named `ignitionReady`, runs once the ignition assets are final and before
-   provisioning, is scoped to the bootstrap ignition only, and declares a
-   `bootstrapOutputPath` the installer validates and reads back. That path may not be
-   named `bootstrap.ign`: the installer's own artifact keeps that name and is left
-   untouched, so no step downstream has to guess which of two files it is looking at.
-   The staging target — a bucket, a compartment, whatever the cloud calls it — is a
-   payload variable; the installer stays unaware of it. `hooks` entries become uniformly
-   structured now, while the descriptor is `v1alpha1` and two payloads exist, rather
-   than growing a parallel `ignition:` stanza that would be a permanent second place to
-   look. And the phase is **gated by an opt-in install-config field**,
-   `platform.external.clusterAPI.bootstrapIgnitionStaging`: a payload declaring
-   `ignitionReady` without it is refused at validation, so handing a payload script the
-   bootstrap ignition is a decision the cluster creator takes rather than one the payload
-   takes for them. Restriction to signed payloads is a possible third value of that enum,
-   not a competing design.
-   *Still open, one thing:*
+### 1. Where do the CI arms get their payload images, and who rebuilds them?
+
+The supply form is **proposed** — one payload image, no filesystem-path mode — and so are the payload layout, templating syntax, variable vocabulary, compatibility file and validation strictness. What that decision creates is a CI dependency the pilot did not have: every end-to-end arm now needs a published image before it can run, where it previously needed a file copy. This matters most for the OCI/CAPOCI arm, which is the **only** arm that proves the central claim — the installer embeds CAPA, so the AWS arm cannot distinguish running the binary it was handed from running the one it already had. Open: which registry the arms pull from, whether the image is built per-run from source or pinned by digest, who owns the rebuild when CAPOCI releases, and whether a pinned digest is still evidence that an arbitrary partner image works.
+
+### 2. How is the scheme fallback for unknown kinds finally scoped?
+
+Three candidates: restrict to `platform: external`, validate against the CRDs actually present in the payload's components file, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.
+
+
+### 3. How is the `ignitionReady` contract finally shaped, and should it be gated?
+
+*Proposed:* 
+the installer provides a first-class staging point rather than leaving each
+partner to wrap the installer in a script and reimplement the same credential hazard.
+The hook is named `ignitionReady`, runs once the ignition assets are final and before
+provisioning, is scoped to the bootstrap ignition only, and declares a
+`bootstrapOutputPath` the installer validates and reads back. That path may not be
+named `bootstrap.ign`: the installer's own artifact keeps that name and is left
+untouched, so no step downstream has to guess which of two files it is looking at.
+The staging target — a bucket, a compartment, whatever the cloud calls it — is a
+payload variable; the installer stays unaware of it. `hooks` entries become uniformly
+structured now, while the descriptor is `v1alpha1` and two payloads exist, rather
+than growing a parallel `ignition:` stanza that would be a permanent second place to
+look. And the phase is **gated by an opt-in install-config field**,
+`platform.external.clusterAPI.bootstrapIgnitionStaging`: a payload declaring
+`ignitionReady` without it is refused at validation, so handing a payload script the
+bootstrap ignition is a decision the cluster creator takes rather than one the payload
+takes for them. Restriction to signed payloads is a possible third value of that enum,
+not a competing design.
+*Still open, one thing:*
+
    * **The window before `metadata.json` exists.** The hook creates cloud objects before
      the installer has written the metadata `destroy cluster` reads. A run that dies in
      between leaves an orphaned object and a live pre-signed request with no record. Two
@@ -2092,120 +2124,170 @@ checksum rather than content — carries over as it was proved.
    coordination between them. That argues for the offload being specified upstream in
    Cluster API's bootstrap contract rather than per provider; `ignitionReady` is what
    makes OpenShift's installs work in the meantime, in either outcome.
-4. **Is payload-owned `controllerArgs` the right resolution of the flag-name problem, and what must the installer still reserve?** The proposal removes the fixed list the external path injects (`pkg/clusterapi/external.go:153-159`) and has the payload declare the controller's whole command line, which is what every integrated provider already does — `pkg/clusterapi/system.go:381` declares `--health-probe-bind-address` where `:345` declares `--health-addr`. That deletes the per-partner wrapper script rather than standardising it, and it is simpler than the alternative considered, a map letting the payload rename the installer's flags while the installer keeps the values.
 
-    What it costs is that the render tokens become public contract: `{{.WebhookPort}}`, `{{.WebhookCertDir}}` and `{{suggestHealthHostPort}}` are now things a partner writes, so they are frozen by the same `v1alpha1` rule as the rest of the descriptor. Two things the installer should keep: `--kubeconfig`, which it appends unconditionally (`pkg/clusterapi/system.go:703-705`) and the payload must not declare; and a validation requiring `{{.WebhookPort}}` and `{{.WebhookCertDir}}` exactly once each, since a controller whose webhook does not match the one the installer installed fails late and obscurely. The check is on the *token*, not the flag name, so it stays provider-agnostic.
+### 4. Is payload-owned `controllerArgs` the right resolution of the flag-name problem, and what must the installer still reserve?
 
-    Left open: whether the install-config's `controllerExtraArgs` — appended last, last occurrence winning, which is what keeps `-v=5` available for a support case without repackaging an image — should exist at all once the provider owns the baseline, or whether a debug-only escape hatch belongs behind an environment variable instead.
-5. **Do we validate user-supplied providers, and how?** A conformance suite is the obvious answer and nobody has scoped one. An openshift-tests-extension (OTE) mechanism could be created, but requires flexibility in the test framework as well, outside of scope, as well it is openshift-specific.
-6. **How are failure modes surfaced?** Installer logs only, or do we need a path that explicitly signals the failing component is not Red Hat owned?
-7. **Should partner cloud controller manager and CSI components be required to tag what they create?** Teardown is not supportable without it.
-8. **Should node-to-node 80/443 be a stated `platform: external` networking requirement?** Currently discovered by failure.
-9.  **Who supplies the cluster's ingress and API endpoint addresses on `platform: external`?** Nothing currently asks the platform for an external address: the ingress `Service` is hand-authored per provider, and the API endpoint arrives only as whatever the partner's Cluster API provider happened to configure. There are three plausible answers and they are not equivalent.
-    *(a)* Every provider hand-authors the ingress `Service` and the partner's cloud controller manager reconciles it — the status quo, and the right answer
-    on a cloud-like external platform.
-    *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently scoped to `platform: None`.
-    *(c)* The installer derives them from the Cluster API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
+The proposal removes the fixed list the external path injects (`pkg/clusterapi/external.go:153-159`) and has the payload declare the controller's whole command line, which is what every integrated provider already does — `pkg/clusterapi/system.go:381` declares `--health-probe-bind-address` where `:345` declares `--health-addr`. That deletes the per-partner wrapper script rather than standardising it, and it is simpler than the alternative considered, a map letting the payload rename the installer's flags while the installer keeps the values.
+  * What it costs is that the render tokens become public contract: `{{.WebhookPort}}`, `{{.WebhookCertDir}}` and `{{suggestHealthHostPort}}` are now things a partner writes, so they are frozen by the same `v1alpha1` rule as the rest of the descriptor. Two things the installer should keep: `--kubeconfig`, which it appends unconditionally (`pkg/clusterapi/system.go:703-705`) and the payload must not declare; and a validation requiring `{{.WebhookPort}}` and `{{.WebhookCertDir}}` exactly once each, since a controller whose webhook does not match the one the installer installed fails late and obscurely. The check is on the *token*, not the flag name, so it stays provider-agnostic.
+  * Left open: whether the install-config's `controllerExtraArgs` — appended last, last occurrence winning, which is what keeps `-v=5` available for a support case without repackaging an image — should exist at all once the provider owns the baseline, or whether a debug-only escape hatch belongs behind an environment variable instead.
 
-    *(d)* **Nobody does, and the address has to be known before the install starts.** The
-    [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) found that **six of sixteen** providers model no load balancer in their API at
-    all — vSphere, Nutanix, Proxmox, CloudStack, IONOS and Huawei — because they follow
-    the kube-vip pattern, where the control-plane VIP is an address the administrator
-    supplies and a static pod on the control-plane nodes claims. On those platforms
-    `Cluster.spec.controlPlaneEndpoint` is an *input* to the cluster template, not
-    something the provider allocates, and there is no load-balancer object for a 22623
-    listener to be added to. This is a distinct case from the provider-allocated endpoint
-    discussed in Open Question 13, and the enhancement currently has no answer for it:
-    `infraReady` cannot supply the address, because it runs after the provider has already
-    reconciled against a template that had to name one. If the contract is to cover these
-    platforms, the address must be sourced from the install-config or from the payload's
-    cluster template before provisioning begins, and the machine-config server's 22623
-    endpoint needs an answer that is not a cloud load balancer.
+### 5. Do we validate user-supplied providers, and how?
 
-10. **Should an extra manifest directory, from pilot, be allowed to contain multiple documents?** The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
-11. **Boot images.** `platform: external` installs need a boot image for the target platform, and for most candidate partner platforms no generic, multi-tenant image is published. This is now measured and it is the single largest limit on how far this enhancement reaches. Of the sixteen Cluster API providers surveyed in the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers), **nine** have no published RHCOS artifact in `data/data/coreos/coreos-rhel-9.json`; **seven** of those nine have a working Ignition platform provider, so the operating system can already boot and configure itself there and only the published artifact is missing — OCI, DigitalOcean, Linode, CloudStack, Hetzner, Outscale and Proxmox. That ratio is the argument against a per-platform special case: a mechanism built for OCI alone would have to be built again six more times. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
-12. **Automatic CSR approval.** There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
-13. **Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?**:
-    [openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
-    This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names becomes product behaviour rather than a partner script, and the hook surface narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
-    Three sub-questions, none of which this enhancement can answer alone:
-    * **Address source.** The shared model knows two: discovered node addresses, and administrator-reserved VIPs. A partner Cluster API provider produces a third — a provider-allocated control-plane endpoint, reported on `Cluster.spec.controlPlaneEndpoint`, which is unknown until `Cluster.status.infrastructureReady`. It is neither a node address nor a reserved VIP, and #2138 is explicit that provider-observed endpoints must not be written into administrator intent as though they were VIPs. The mapping from a Cluster API endpoint into `status.networking.endpoints` has no owner today.
-    * **Bootstrap ordering.** #2138 requires that bootstrap not depend on an in-cluster controller that needs the DNS being configured. On this path the endpoint is not known at `create cluster` time, so the installer would have to resolve policy up front and reconcile the address after `infraReady` — the same constraint their None SNO installer path carries, but with a later address.
-    * **Sequencing.** #2138 is provisional, has no External owner, and leaves the acceptance component (CNO or cluster-config-operator) undecided. Nothing in this enhancement's Tech Preview criteria should depend on it. The question to settle before Tech Preview is narrower: whether the hook contract is designed as permanent, or as a bridge that a later shared-networking adoption is expected to replace for the DNS case.
-    Answering this also decides whether the special-purpose hooks sketched earlier — a DNS creator, a load-balancer creator — are worth defining, or whether that work belongs in the shared contract.
+A conformance suite is the obvious answer and nobody has scoped one. An openshift-tests-extension (OTE) mechanism could be created, but requires flexibility in the test framework as well, outside of scope, as well it is openshift-specific.
 
-14. **Where does the `openshift.yaml` contract live, who owns its schema, and how does a
-    partner validate a payload before an install?** The descriptor is authored by a third
-    party and carries `apiVersion: external.openshift.io/v1alpha1` and
-    `kind: ExternalProviderPayload`, so it looks like a Kubernetes API. Today it is none of the
-    things that implies: the only definition is a Go struct in the installer, parsed with
-    strict unmarshalling that rejects any other `apiVersion` outright, and there is no
-    published schema, no conversion, no owner of the `external.openshift.io` group and no
-    API review. A partner's first indication that their descriptor is wrong is an install
-    that fails. That is tolerable for Dev Preview and not for a contract partners build
-    release pipelines around. Three of the four sub-questions now have an answer, two
-    of them proposed and one settled:
+### 6. How are failure modes surfaced?
 
-    * **Proposed: the schema stays in `openshift/installer`, and keeps its GVK.** The type
-      lives next to its one consumer, versioned with the installer in the same way
-      `install-config.yaml` is, and skips API review for a document no API server will
-      ever serve. The GVK is retained rather than dropped: it costs nothing now and is the
-      only thing that makes a later move to `openshift/api` — if an external component
-      ever needs to validate a payload — a compatible change rather than a new format.
-      What this consciously forgoes is a generated, machine-readable schema a partner can
-      check against offline; the `external-payload validate` command below is the
-      substitute, and the trade is that the check needs the installer binary rather than a
-      published OpenAPI document.
+Installer logs only, or do we need a path that explicitly signals the failing component is not Red Hat owned?
 
-      Two consequences worth stating, because both are cheap now and expensive later.
-      **The Go types should be written to API-review convention from the start** — a doc
-      comment on every field, `+optional`/`+required` markers, no `map[string]interface{}`
-      — so that a later move to `openshift/api` is a relocation rather than a rewrite. The
-      candidate trigger for that move is HyperShift reusing the format, which is out of
-      scope here and belongs to its own enhancement. **And the validation that actually
-      runs has to be hand-written Go.** The installer already carries `XValidation`
-      markers — `pkg/types/external/platform.go:20` is one — and the generated
-      install-config CRD has 21 `x-kubernetes-validations` entries, but there is no CEL
-      evaluator anywhere in the installer and the only consumer of that CRD is
-      `pkg/explain`. The markers are documentation rendered by `explain`, never enforced:
-      the `platformName` rule is a transition rule over `oldSelf`, which is inert without
-      an API server. Writing them is still right, for the relocation above and for the
-      intent they record; relying on them is not.
-    * **Proposed: a partner validates without installing.** `openshift-install
-      external-payload validate` runs exactly the layout, executable and compatibility
-      validation the install runs, from an image reference alone. See *Workflow
-      Description* for its shape.
-    * **Proposed: `create manifests` stays the install's gate and is not the partner's.**
-      It already resolves and validates the payload
-      (`pkg/asset/manifests/openshift.go:324`), so a descriptor error surfaces before any
-      cloud call, and that stays. But it is a poor partner-readiness check — it needs a
-      complete install-config including a pull secret and an SSH key, and it produces a
-      manifest tree containing TLS and CA private keys and the kubeadmin password hash.
-      Asking a partner to run it in CI to validate a descriptor hands them a
-      credential-store side effect for a structural check.
+### 7. Should partner cloud controller manager and CSI components be required to tag what they create?
 
-    **Still open: how does `v1alpha1` become `v1beta1`?** Strict unmarshalling of a fixed
-    `apiVersion` means a bump breaks every published payload *and* every older installer,
-    in both directions, with no conversion path. Keeping the schema installer-local makes
-    this sharper rather than softer, because the installer binary is now both the
-    definition and the only validator: `external-payload validate` answers only for the
-    installer it was run with, so the skew rule is part of the command's contract, not a
-    footnote to it. The rule has to be written down before partners publish.
+Teardown is not supportable without it.
 
-    Related: the Kubernetes compatibility range is compared against the version the
-    installer binary was built against rather than the release image's, which is the same
-    ownership question seen from the other side — the installer is asserting a fact about
-    the release from its own build rather than reading it.
 
-    **One input to that decision: the hook set looks stable.** The riskiest part of a
-    version bump is a change to the set of lifecycle points, because adding one changes
-    what every published payload must declare. The [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) looked for a gap in the sixteen
-    providers' APIs that none of the four hooks covers, and did not find one: every
-    provider-specific shortfall landed in an existing phase. That is not proof the set is
-    complete — a provider outside the sixteen, or a future OpenShift requirement, could
-    still add one — but it is positive evidence that the set can be frozen at four for
-    `v1beta1` rather than left open, and freezing it removes the most likely reason a
-    breaking bump would be needed.
+### 8. Should node-to-node 80/443 be a stated `platform: external` networking requirement?**
+
+Currently discovered by failure.
+
+### 9. Who supplies the cluster's ingress and API endpoint addresses on `platform: external`?
+
+Nothing currently asks the platform for an external address: the ingress `Service` is hand-authored per provider, and the API endpoint arrives only as whatever the partner's Cluster API provider happened to configure. There are three plausible answers and they are not equivalent.
+
+  * *(a)* Every provider hand-authors the ingress `Service` and the partner's cloud controller manager reconciles it — the status quo, and the right answer
+  on a cloud-like external platform.
+  * *(b)* The cluster owns the endpoints through the shared `networking.loadBalancer` contract of [#2138][ep-2138], with keepalived and HAProxy on reserved VIPs — plausible on an on-prem-like external platform, and already designed, though currently scoped to `platform: None`.
+  * *(c)* The installer derives them from the Cluster API resources the provider produced. The platform's own character decides which applies, which argues for the contract permitting more than one rather than this enhancement picking one. See Open Question 13.
+  * *(d)* **Nobody does, and the address has to be known before the install starts.** The
+  [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) found that **six of sixteen** providers model no load balancer in their API at
+  all — vSphere, Nutanix, Proxmox, CloudStack, IONOS and Huawei — because they follow
+  the kube-vip pattern, where the control-plane VIP is an address the administrator
+  supplies and a static pod on the control-plane nodes claims. On those platforms
+  `Cluster.spec.controlPlaneEndpoint` is an *input* to the cluster template, not
+  something the provider allocates, and there is no load-balancer object for a 22623
+  listener to be added to. This is a distinct case from the provider-allocated endpoint
+  discussed in Open Question 13, and the enhancement currently has no answer for it:
+  `infraReady` cannot supply the address, because it runs after the provider has already
+  reconciled against a template that had to name one. If the contract is to cover these
+  platforms, the address must be sourced from the install-config or from the payload's
+  cluster template before provisioning begins, and the machine-config server's 22623
+  endpoint needs an answer that is not a cloud load balancer.
+
+### 10. Should an extra manifest directory, from pilot, be allowed to contain multiple documents?
+
+The pilot refuses them, so that a multi-document file fails loudly rather than silently applying only the first. This is an API contract and should be decided before this lands.
+
+
+### 11. RHCOS Boot images
+
+`platform: external` installs need a boot image for the target platform, and for most candidate partner platforms no generic, multi-tenant image is published. This is now measured and it is the single largest limit on how far this enhancement reaches. Of the sixteen Cluster API providers surveyed in the [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers), **nine** have no published RHCOS artifact in `data/data/coreos/coreos-rhel-9.json`; **seven** of those nine have a working Ignition platform provider, so the operating system can already boot and configure itself there and only the published artifact is missing — OCI, DigitalOcean, Linode, CloudStack, Hetzner, Outscale and Proxmox. That ratio is the argument against a per-platform special case: a mechanism built for OCI alone would have to be built again six more times. The capability exists in RHCOS; the artifact does not. A generic artifact-override mechanism in the shape of an `OPENSHIFT_INSTALL_RHCOS_ARTIFACTS_JSON` input is the preferred direction, explicitly **not** as a per-platform special case. Tracked separately; blocks continuous CI for the second provider only.
+
+### 12. Automatic CSR approval.
+
+There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
+
+
+### 13. Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?
+
+[openshift/enhancements#2138][ep-2138] proposes moving infrastructure DNS and API/ingress endpoint ownership out of the platform union into `Infrastructure.spec.networking` / `.status.networking`, with MCO rendering CoreDNS and, where requested, the on-prem keepalived/HAProxy stack. It names External as an intended future consumer but explicitly does not enable it.
+
+This bears directly on the hook design. Today every cloud-specific networking action is a partner-supplied program: `infraReady` typically creates DNS records, and nothing in the installer asks the platform for an external address. If External can set `networking.dns.management: ClusterManaged`, then node-level resolution of the cluster API, internal API and application names becomes product behaviour rather than a partner script, and the hook surface narrows to work that is genuinely outside the cluster — authoritative external DNS, ignition staging, and anything the partner's own cloud requires.
+Three sub-questions, none of which this enhancement can answer alone:
+
+* **Address source.**
+
+The shared model knows two: discovered node addresses, and administrator-reserved VIPs. A partner Cluster API provider produces a third — a provider-allocated control-plane endpoint, reported on `Cluster.spec.controlPlaneEndpoint`, which is unknown until `Cluster.status.infrastructureReady`. It is neither a node address nor a reserved VIP, and Proposal `#2138` is explicit that provider-observed endpoints must not be written into administrator intent as though they were VIPs. The mapping from a Cluster API endpoint into `status.networking.endpoints` has no owner today.
+
+* **Bootstrap ordering.**
+
+Proposal `#2138` requires that bootstrap not depend on an in-cluster controller that needs the DNS being configured. On this path the endpoint is not known at `create cluster` time, so the installer would have to resolve policy up front and reconcile the address after `infraReady` — the same constraint their None SNO installer path carries, but with a later address.
+
+* **Sequencing.** 
+
+Proposal `#2138` is provisional, has no External owner, and leaves the acceptance component (CNO or cluster-config-operator) undecided. Nothing in this enhancement's Tech Preview criteria should depend on it. The question to settle before Tech Preview is narrower: whether the hook contract is designed as permanent, or as a bridge that a later shared-networking adoption is expected to replace for the DNS case.
+Answering this also decides whether the special-purpose hooks sketched earlier — a DNS creator, a load-balancer creator — are worth defining, or whether that work belongs in the shared contract.
+
+### 14. Where does the `openshift.yaml` contract live, who owns its schema, and how does a  partner validate a payload before an install?
+
+The descriptor is authored by a third
+party and carries `apiVersion: external.openshift.io/v1alpha1` and
+`kind: ExternalProviderPayload`, so it looks like a Kubernetes API. Today it is none of the
+things that implies: the only definition is a Go struct in the installer, parsed with
+strict unmarshalling that rejects any other `apiVersion` outright, and there is no
+published schema, no conversion, no owner of the `external.openshift.io` group and no
+API review. A partner's first indication that their descriptor is wrong is an install
+that fails. That is tolerable for Dev Preview and not for a contract partners build
+release pipelines around. Three of the four sub-questions now have an answer, two
+of them proposed and one settled:
+
+* **Proposed: the schema stays in `openshift/installer`, and keeps its GVK.**
+
+The type lives next to its one consumer, versioned with the installer in the same way
+`install-config.yaml` is, and skips API review for a document no API server will
+ever serve. The GVK is retained rather than dropped: it costs nothing now and is the
+only thing that makes a later move to `openshift/api` — if an external component
+ever needs to validate a payload — a compatible change rather than a new format.
+What this consciously forgoes is a generated, machine-readable schema a partner can
+check against offline; the `external-payload validate` command below is the
+substitute, and the trade is that the check needs the installer binary rather than a
+published OpenAPI document.
+
+Two consequences worth stating, because both are cheap now and expensive later.
+**The Go types should be written to API-review convention from the start** — a doc
+comment on every field, `+optional`/`+required` markers, no `map[string]interface{}`
+— so that a later move to `openshift/api` is a relocation rather than a rewrite. The
+candidate trigger for that move is HyperShift reusing the format, which is out of
+scope here and belongs to its own enhancement. **And the validation that actually
+runs has to be hand-written Go.** The installer already carries `XValidation`
+markers — `pkg/types/external/platform.go:20` is one — and the generated
+install-config CRD has 21 `x-kubernetes-validations` entries, but there is no CEL
+evaluator anywhere in the installer and the only consumer of that CRD is
+`pkg/explain`. The markers are documentation rendered by `explain`, never enforced:
+the `platformName` rule is a transition rule over `oldSelf`, which is inert without
+an API server. Writing them is still right, for the relocation above and for the
+intent they record; relying on them is not.
+
+* **Proposed: a partner validates without installing.**
+
+`openshift-install external-payload validate` runs exactly the layout, executable and compatibility validation the install runs, from an image reference alone. See *Workflow
+    Description* for its shape.
+
+* **Proposed: `create manifests` stays the install's gate and is not the partner's.**
+
+It already resolves and validates the payload
+(`pkg/asset/manifests/openshift.go:324`), so a descriptor error surfaces before any
+cloud call, and that stays. But it is a poor partner-readiness check — it needs a
+complete install-config including a pull secret and an SSH key, and it produces a
+manifest tree containing TLS and CA private keys and the kubeadmin password hash.
+Asking a partner to run it in CI to validate a descriptor hands them a
+credential-store side effect for a structural check.
+
+*Still open: how does `v1alpha1` become `v1beta1`?*
+
+Strict unmarshalling of a fixed
+`apiVersion` means a bump breaks every published payload *and* every older installer,
+in both directions, with no conversion path. Keeping the schema installer-local makes
+this sharper rather than softer, because the installer binary is now both the
+definition and the only validator: `external-payload validate` answers only for the
+installer it was run with, so the skew rule is part of the command's contract, not a
+footnote to it. The rule has to be written down before partners publish.
+
+Related: the Kubernetes compatibility range is compared against the version the
+installer binary was built against rather than the release image's, which is the same
+ownership question seen from the other side — the installer is asserting a fact about
+the release from its own build rather than reading it.
+
+> "the version the installer binary was built against rather than the release image's": thsi is in the backlog to plan here, will keep the Question open to collect more ideas and insights about that approach.
+
+*One input to that decision: the hook set looks stable.*
+
+The riskiest part of a
+version bump is a change to the set of lifecycle points, because adding one changes
+what every published payload must declare. The [provider benchmark](#benchmark-the-proposal-against-sixteen-cluster-api-providers) looked for a gap in the sixteen
+providers' APIs that none of the four hooks covers, and did not find one: every
+provider-specific shortfall landed in an existing phase. That is not proof the set is
+complete — a provider outside the sixteen, or a future OpenShift requirement, could
+still add one — but it is positive evidence that the set can be frozen at four for
+`v1beta1` rather than left open, and freezing it removes the most likely reason a
+breaking bump would be needed.
 
 [ep-2138]: https://github.com/openshift/enhancements/pull/2138
 [ign-platforms]: https://github.com/coreos/ignition/blob/main/docs/supported-platforms.md
