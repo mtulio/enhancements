@@ -1734,6 +1734,13 @@ an object, a pre-authenticated request — outlive the phase that created them.
   state directory.
 * To log the program's path, its SHA-256 and its exit code, and never its output or the
   contents of anything it was given.
+* **To say, in its own log, where its code stops and the provider's begins.** Every hook
+  invocation is bracketed by `=== STARTING PROVIDER HOOK (<phase>) ===` and
+  `=== FINISHING PROVIDER HOOK (<phase>) ===`, and the closing banner is emitted whether
+  the hook exited zero or not. This is a support obligation, not cosmetics: the predictable
+  way a shared-responsibility contract fails in practice is a failure inside a partner's
+  hook arriving as a bug against OpenShift, because the installer's log gave a reader no
+  way to tell which side of the boundary they were on.
 
 **What the installer does not undertake, and will not:**
 
@@ -1754,9 +1761,23 @@ an object, a pre-authenticated request — outlive the phase that created them.
   cloud call, rather than after the last one, is therefore the partner's discipline and
   not something the installer can impose — the reference payload does exactly that, and
   its `preDestroy` treats a missing state file as "nothing to do".
-* **It does not hold, forward or validate the partner's cloud credentials.** The hook
-  inherits the `openshift-install` process environment and finds its credentials there,
-  the same way the provider's controller does.
+* **It does not hold, forward or validate the partner's cloud credentials, and it does
+  not create the cluster's.** The whole of a cluster's integration with the cloud is the
+  provider's to deliver and the provider's to keep working, and a credential is part of
+  that integration rather than an exception to it. This covers both halves of the
+  problem. Whatever the hook itself authenticates with, it finds in the inherited
+  `openshift-install` process environment, the same way the provider's controller does.
+  And whatever the *installed cluster's* components need — the cloud controller manager's
+  Secret above all — is the provider's to put there, whether the credential was created
+  by the user before the install and merely materialized by a hook, or produced by the
+  payload's own interfaces during one. Either is a valid design; both are maintained by
+  the provider; neither is something OpenShift supplies. Concretely, on
+  `platform: external` nothing in the product creates a cloud-credentials Secret: the
+  installer emits one only for the integrated platforms
+  ([`pkg/asset/manifests/openshift.go`](https://github.com/openshift/installer/blob/master/pkg/asset/manifests/openshift.go)),
+  and the cloud credential operator requires that same root Secret plus a
+  platform-matched `CredentialsRequest` and has neither here. A payload must not ship a
+  credential in its image, so the only correct place for one is a hook.
 
 The window this leaves open is named honestly in Open Question 3: a hook creates cloud
 objects before `metadata.json` exists, so a run that dies in between leaves an orphan
@@ -2221,6 +2242,25 @@ mode-specific; the payload form changes how the provider is delivered, not any o
 * Three shared-code touches — manifest handling, artifact resolution, the platform switch
   — are the full blast radius on integrated platforms.
 
+**The proposed form has since been run, not only the pilot's.** On 2026-11-09 the AWS arm
+was installed from scratch with the provider delivered as an OCI payload image and no
+human intervention at any point: `create cluster` returned 0 with no errors, five nodes
+Ready, zero pending CSRs, 34 of 34 cluster operators Available and none Degraded. That run
+is what closes the gap between "the pilot proved the mechanism" and "the proposal's
+delivery form works", and three of its measurements are load-bearing for decisions
+elsewhere in this document:
+
+* **A hook's budget cannot be derived from one observation.** The wait for the cloud
+  controller manager's namespace to appear took 4m10s on one run and 14m36s on the next —
+  the same payload, the same region, consecutive days. A fixed budget chosen from a single
+  measurement will be wrong; the hook contract has to tolerate that spread.
+* **`postProvision` is invoked long before the things it waits for exist**, about five
+  minutes into the install and immediately after the machines are created. The whole run
+  of that hook was 28m29s, almost all of it waiting. A hook phase is a point in a sequence,
+  not a promise that the sequence has caught up.
+* **Approving node certificates is what made the install unattended**, and it also removed
+  a second fault it had been hiding — see the Known gap under Support below.
+
 **Where the proposal departs.** The pilot answered "can the installer run a provider it
 does not embed?" and deliberately left every *delivery* question open. Those are what the
 proposal closes:
@@ -2379,6 +2419,14 @@ standard is the unresearched question recorded against that field.
 
 Installer logs only, or do we need a path that explicitly signals the failing component is not Red Hat owned?
 
+Partly answered. The log side is proposed and implemented: a hook's output goes to its own
+file, and the invocation is bracketed by `=== STARTING PROVIDER HOOK (<phase>) ===` /
+`=== FINISHING PROVIDER HOOK (<phase>) ===` so a reader can see which side of the
+boundary a failure is on — see *Shared responsibility* above. What remains open is
+whether anything beyond the log is needed: a machine-readable signal in `metadata.json`
+or in the returned error, so that automated triage and support tooling can classify a
+failed install as partner-owned without parsing text.
+
 ### 7. Should partner cloud controller manager and CSI components be required to tag what they create?
 
 Teardown is not supportable without it.
@@ -2423,6 +2471,16 @@ The pilot refuses them, so that a multi-document file fails loudly rather than s
 ### 12. Automatic CSR approval.
 
 There is no cloud-specific machine approver on `platform: external`, so worker CSRs are never approved and the measured cost is manual approval on every install. This pre-dates this enhancement and applies equally to `platform: none`. A webhook comparing a CSR against the instance it claims to come from is the agreed direction; it has no owner, no repository and no schedule, and the only thing settled is that it is not the installer. Is there a CAPI native approach to handle CSR approvals?
+
+The mechanism is now measured rather than assumed, and it is worth stating precisely because "no approver" is the wrong summary. `cluster-machine-approver` **is** deployed, running and reconciling every request; it refuses each one because it decides by looking the node up in the Machine API:
+
+```
+csr-r7frx: failed to find machine with InternalDNS matching ip-10-0-7-140, cannot approve
+```
+
+`oc get machines.machine.openshift.io -A` returns nothing on this platform. The Cluster API `Machine` objects that drove the install live in the installer's local, temporary control plane and are never delivered to the cluster being built, so the approver's source of truth is empty and its refusal is correct. This is the general shape of the problem rather than an AWS detail: **any** cluster provisioned by machines no in-cluster API knows about hits it, which is why a CAPI-native answer — or a source of truth the approver can consult that is not the Machine API — is the question worth answering here.
+
+The reference implementation now demonstrates the day-0 half in its `postProvision` hook, and deliberately demonstrates the *checked* form rather than the convenient one: it approves only the `kube-apiserver-client-kubelet` and `kubelet-serving` signers, only from the expected requesters, and only when the CSR's `system:node:<name>` subject matches an instance carrying the cluster's own ownership tag. Approving whatever is pending would be a reference implementation teaching partners to hand out node identities to anyone who can file a request. **This covers day 0 only** — certificates rotate and nodes are replaced long after the installer has exited — and it is a demonstration of the pattern, not a proposal that hooks are where this belongs.
 
 
 ### 13. Should `platform: external` consume the shared `Infrastructure` networking contract instead of DNS and load-balancer hooks?
@@ -2785,6 +2843,17 @@ establish which of the four stages failed and route accordingly.
 **Known gap.** Worker CSRs are not automatically approved on `platform: external`. A
 cluster that reaches a healthy control plane but whose workers never join is most likely
 hitting this, not a provider defect; `oc get csr` will show pending requests.
+`cluster-machine-approver` is running and is not broken — it refuses because it resolves
+CSRs through the Machine API, which is empty here. See Open Question 12.
+
+**And the gap hides a second one, which is the part worth carrying into support.** On a
+pilot cluster the ingress load balancer was created by the cloud controller manager with
+zero targets registered and stayed that way for fifty-two minutes, because the target set
+is recomputed when the node set changes and the node set never changed again after the
+initial registration. On an ordinary OpenShift cluster workers joining later supplies that
+change; here nothing did. So the two faults compose into one symptom — `*.apps` resolves
+and then times out — and fixing the CSR gap *masks* the load balancer one rather than
+curing it. A cluster whose workers never joined should be checked for both.
 
 >  **Should the installer poll for pending CSRs and report them, short of approving them?**
 >  Reporting is cheap and does not need an owner: the installer already waits for workers,
