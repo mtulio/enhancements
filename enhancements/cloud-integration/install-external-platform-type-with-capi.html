@@ -597,7 +597,7 @@
 
     <figure>
       <div class="fig-scroll wide">
-        <svg viewBox="0 0 1000 392" role="img" aria-label="A shared responsibility diagram in three rows. A horizontal support boundary separates what Red Hat supports, above, from what the provider or integrator supports, below. A vertical divider separates install time, on the left, from the installed cluster, on the right. Top row, above the boundary: install-config feeds openshift-install, which runs a local ephemeral Cluster API control plane and holds no cloud credentials by design, and which installs the OpenShift core components from the release payload on the far side of the divider. Middle row, below the boundary: the CAPI provider with its controller and CRDs; the four hooks, ignitionReady, infraReady, postProvision and preDestroy; and, across the divider, the provider components, its cloud controller manager and CSI driver. Two arrows descend from openshift-install, one into the CAPI provider and one into the hooks, because the installer is what runs both: the hooks are supplied by the payload but are not called by the provider. Bottom row: the partner cloud spans the full width and crosses the divider, because it is the same cloud at install time and afterwards. The CAPI provider, the hooks and the provider components each call down into it. Nothing from the local control plane reaches the installed cluster." style="font-family:var(--sans)">
+        <svg viewBox="0 0 1000 392" role="img" aria-label="A shared responsibility diagram in three rows. A horizontal support boundary separates what Red Hat supports, above, from what the provider or integrator supports, below. A vertical divider separates install time, on the left, from the installed cluster, on the right. Top row, above the boundary: install-config feeds openshift-install, which runs a local ephemeral Cluster API control plane and holds no cloud credentials by design, and which installs the OpenShift core components from the release payload on the far side of the divider. Middle row, below the boundary: the CAPI provider with its controller and CRDs; the four hooks, ignition, infraReady, postProvision and preDestroy; and, across the divider, the provider components, its cloud controller manager and CSI driver. Two arrows descend from openshift-install, one into the CAPI provider and one into the hooks, because the installer is what runs both: the hooks are supplied by the payload but are not called by the provider. Bottom row: the partner cloud spans the full width and crosses the divider, because it is the same cloud at install time and afterwards. The CAPI provider, the hooks and the provider components each call down into it. Nothing from the local control plane reaches the installed cluster." style="font-family:var(--sans)">
           <defs>
             <marker id="d3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L10,5 L0,10 z" style="fill:var(--ocp)"/>
@@ -649,7 +649,7 @@
 
           <rect x="356" y="204" width="310" height="74" rx="8" style="fill:var(--surface);stroke:var(--ext);stroke-width:1.25"/>
           <text x="511" y="226" text-anchor="middle" style="fill:var(--ink);font-size:13px;font-weight:600">four hooks</text>
-          <text x="511" y="244" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:8.5px">ignitionReady · infraReady · postProvision · preDestroy</text>
+          <text x="511" y="244" text-anchor="middle" style="fill:var(--ext);font-family:var(--mono);font-size:8.5px">ignition · infraReady · postProvision · preDestroy</text>
           <text x="511" y="258" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:8px">supplied by the payload</text>
           <text x="511" y="270" text-anchor="middle" style="fill:var(--faint);font-family:var(--mono);font-size:8px">run by openshift-install, not by the provider</text>
 
@@ -874,10 +874,10 @@
 
     <div class="cols-4">
       <div class="panel ext">
-        <h3>ignitionReady</h3>
+        <h3>ignition</h3>
         <p class="small body"><strong>Conditional, but not rare.</strong> Only for providers whose controller cannot stage an oversized bootstrap ignition itself — which, measured across sixteen providers, is <strong>eleven of the fourteen</strong> that can run Ignition at all.</p>
-        <p class="small body">CAPA can: the installer hands it the full ignition in a Secret and the controller uploads to <code>AWSCluster.spec.s3Bucket</code>. CAPOCI cannot — it base64-encodes user data into instance metadata (<code>cloud/scope/machine.go:353</code>), and <strong>OCI itself</strong> caps that metadata at 32,000 bytes against a <code>bootstrap.ign</code> of hundreds of KB. The cap is the cloud's, not the provider's: no such constant exists in CAPOCI, so the install fails at the cloud API with a message about metadata size and nothing that mentions Ignition.</p>
-        <p class="small body">The only hook whose <em>output</em> the installer reads back, via a <code>bootstrapOutputPath</code> the payload declares — which may not be named <code>bootstrap.ign</code>, so the installer's own artifact is never shadowed. <strong>Gated</strong> by an opt-in install-config field, <code>platform.external.clusterAPI.bootstrapIgnitionStaging</code> — an enum, so &ldquo;signed payloads only&rdquo; is a later third value rather than a second field.</p>
+        <p class="small body">CAPA can: the installer hands it the full ignition in a Secret and the controller uploads to <code>AWSCluster.spec.s3Bucket</code>. CAPOCI cannot — it base64-encodes user data into instance metadata (<code>cloud/scope/machine.go:353</code>), and <strong>OCI itself</strong> caps that metadata at 32,000 bytes against a <code>bootstrap.ign</code> of hundreds of KB &mdash; and since the encoding precedes the cap, the effective ceiling is nearer 24,000 bytes of Ignition. The cap is the cloud's, not the provider's: no such constant exists in CAPOCI, so the install fails at the cloud API with a message about metadata size and nothing that mentions Ignition.</p>
+        <p class="small body">The only hook whose <em>output</em> the installer reads back, via a <code>bootstrapOutputPath</code> the payload declares — which may not be named <code>bootstrap.ign</code>, so the installer's own artifact is never shadowed. It reads it back because it owns the Secret: a bootstrap <code>Machine</code> gets its data through <code>spec.bootstrap.dataSecretName</code>, the reference payload names the installer's own <code>&lt;infraID&gt;-bootstrap</code>, and no other party can write it. <strong>Gated</strong> by an opt-in install-config field, <code>platform.external.clusterAPI.bootstrapIgnitionStaging</code> — an enum, so &ldquo;signed payloads only&rdquo; is a later third value rather than a second field.</p>
       </div>
       <div class="panel ext">
         <h3>infraReady</h3>
@@ -897,7 +897,7 @@
       </div>
     </div>
 
-    <p class="callout ext"><strong><code>ignitionReady</code> is the one departure from the pilot.</strong> The pilot could not express it as a hook: the bootstrap ignition is final before provisioning begins, and all three existing hooks fire after that. It had to wrap the installer in a three-phase shell script — <code>create ignition-configs</code>, offload by hand, <code>create cluster</code> — which worked only because the asset store re-reads a changed file from disk across process boundaries. Making it a hook collapses that back into one <code>create cluster</code>, <em>and</em> stops the mechanism depending on shared asset-store behaviour every platform relies on: the substitution happens inside the external path only, and <code>&lt;install-dir&gt;/bootstrap.ign</code> is never mutated.</p>
+    <p class="callout ext"><strong><code>ignition</code> is the one departure from the pilot, and it is named for the interface it exposes.</strong> Each phase mirrors an installer Go interface rather than inventing one: <code>ignition</code> is <code>IgnitionProvider.Ignition</code> (<code>pkg/infrastructure/clusterapi/types.go:118</code>), <code>infraReady</code> is <code>InfraReadyProvider.InfraReady</code>, <code>postProvision</code> is <code>PostProvider.PostProvision</code>. It runs where that interface runs — <strong>after the Cluster reports its infrastructure ready and before any Machine is created</strong> (<code>clusterapi.go:348</code>; machines at <code>:383</code>) — which is the same point at which six integrated providers already stage: OpenStack uploads the ignition and returns a shim, IBM Cloud writes it to COS because it is too large for VSI user data, Nutanix builds an ISO for Prism Central. The pilot could not express it at all: <code>infraReady</code> and <code>postProvision</code> both fire after the bootstrap Secret has been published. It had to wrap the installer in a three-phase shell script — <code>create ignition-configs</code>, offload by hand, <code>create cluster</code> — which worked only because the asset store re-reads a changed file from disk across process boundaries. Making it a hook collapses that back into one <code>create cluster</code>, <em>and</em> stops the mechanism depending on shared asset-store behaviour every platform relies on: the substitution happens inside the external path only, and <code>&lt;install-dir&gt;/bootstrap.ign</code> is never mutated.</p>
 
     <p class="callout ocp"><strong>Each hook gets paths, never documents.</strong> <code>OPENSHIFT_INSTALL_INFRA_JSON</code> is the whole mechanism: the installer cannot read a field off an <code>AWSCluster</code> because it has no <code>AWSCluster</code> type and must not acquire one. It copies the object out of its local control plane as JSON and lets the hook dig.</p>
   </div>
@@ -918,16 +918,17 @@
 
     <div class="flow">
       <span class="flow-label">create cluster</span>
-      <span class="chip ext">ignitionReady hook</span><span class="arw">→</span>
       <span class="chip ocp">local CAPI control plane up</span><span class="arw">→</span>
       <span class="chip ext">provider starts</span><span class="arw">→</span>
-      <span class="chip ocp">apply Cluster + machines</span><span class="arw">→</span>
-      <span class="chip ext">cloud provisions</span>
+      <span class="chip ocp">apply Cluster + infra objects</span><span class="arw">→</span>
+      <span class="chip ext">cloud provisions network + LBs</span>
     </div>
 
     <div class="flow">
       <span class="flow-label">infrastructureReady</span>
       <span class="chip ext">infraReady hook</span><span class="arw">→</span>
+      <span class="chip ext">ignition hook</span><span class="arw">→</span>
+      <span class="chip ocp">apply Machines</span><span class="arw">→</span>
       <span class="chip ocp">bootstrap</span><span class="arw">→</span>
       <span class="chip ext">postProvision hook</span><span class="arw">→</span>
       <span class="chip ocp">wait for install-complete</span>
@@ -1050,7 +1051,7 @@
         <tr>
           <td><strong>Offloading an oversized ignition</strong></td>
           <td><strong>3</strong> of the fourteen that can run Ignition need no help — CAPA's <code>s3Bucket</code>, vSphere's <code>guestinfo</code>, Proxmox's storage snippet</td>
-          <td><code>ignitionReady</code> is correctly conditional, and conditional is not rare: the other eleven hand the bootstrap bytes to a size-capped cloud metadata API.</td>
+          <td><code>ignition</code> is correctly conditional, and conditional is not rare: the other eleven hand the bootstrap bytes to a size-capped cloud metadata API.</td>
         </tr>
         <tr>
           <td><strong>A published RHCOS artifact</strong></td>
@@ -1111,7 +1112,7 @@
 <section class="slide" id="slide-16" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Risks</p>
-    <h2>Four risks worth naming out loud</h2>
+    <h2>Six risks worth naming out loud</h2>
 
     <div class="cols-2">
       <div class="panel ext">
@@ -1120,8 +1121,19 @@
       </div>
       <div class="panel ext">
         <h3>Ignition staging hands a hook the day-0 secrets</h3>
-        <p class="small body">An <code>ignitionReady</code> hook reads the complete <code>bootstrap.ign</code>: MCS TLS key, a CA key, the pull secret, the kubeadmin hash. No other hook sees anything comparable. <strong>No mitigation changes that</strong> — only its blast radius is bounded: bootstrap only, size and SHA-256 logged and never content, and the script ships in the same payload whose controller already runs with the installer's privileges.</p>
+        <p class="small body">An <code>ignition</code> hook reads the complete <code>bootstrap.ign</code>: MCS TLS key, a CA key, the pull secret, the kubeadmin hash. No other hook sees anything comparable. <strong>No mitigation changes that</strong> — only its blast radius is bounded: bootstrap only, size and SHA-256 logged and never content, and the script ships in the same payload whose controller already runs with the installer's privileges.</p>
         <p class="small body">The pre-signed URL it mints is equally credential-equivalent. Shortest workable lifetime, deleted at teardown, verified gone rather than assumed — and the teardown record holds the request's <em>identifier</em>, never its URL.</p>
+        <p class="small body">The interface it exposes is labelled <code>WARNING! Low-level primitive. Use only if absolutely necessary.</code> upstream (<code>types.go:118</code>). That warning was written for installer maintainers under OWNERS review; a payload hook makes the same point of extension reachable by a program nobody reviewed. <strong>The warning is not softened</strong> — it is why the phase is conditional, consent-gated, scoped to bootstrap alone, read back through a declared path, and refused when the hook returns the bytes it was given.</p>
+      </div>
+      <div class="panel ext">
+        <h3>Failing here costs the network tier</h3>
+        <p class="small body">Running at <code>IgnitionProvider.Ignition</code> means the VCN, its subnets and its load balancers already exist when the hook is reached (<code>clusterapi.go:348</code>). <strong>No compute does</strong> — machines are created afterwards at <code>:383</code> — which bounds it, and <code>destroy cluster</code> removes what the provider built.</p>
+        <p class="small body">The likeliest mistake is caught for free: <strong>the consent check runs twice</strong>, once at <code>PreProvision</code> — before the control plane starts and before any cloud resource exists — and again at the handover. A payload declaring the hook against an install-config that never allowed it costs nothing. It is <em>not</em> caught at <code>create manifests</code>, which resolves the payload earlier without consulting the field, so the refusal lands at <code>create cluster</code>.</p>
+      </div>
+      <div class="panel ocp">
+        <h3>The local control plane's Secrets are on disk</h3>
+        <p class="small body">&ldquo;Local&rdquo; is not &ldquo;in memory&rdquo;: envtest's etcd lives at <code>&lt;install-dir&gt;/.clusterapi_output/etcd</code> (<code>localcontrolplane.go:77</code>), so the bootstrap, master and worker ignition Secrets are <strong>unencrypted at rest</strong> for the install's duration. <code>CleanEtcd</code> removes it on failure, bootstrap destroy and <code>destroy cluster</code> — but from deferred paths, so a hard kill leaves it.</p>
+        <p class="small body">Pre-existing Cluster API behaviour, not introduced here, but it matters more on this platform: the install directory is what a partner copies, archives and attaches to a ticket. Named as a secret-bearing artifact alongside <code>auth/</code>; never published in an example.</p>
       </div>
       <div class="panel ocp">
         <h3>Support attribution</h3>
@@ -1150,7 +1162,7 @@
           <li><strong>How is the unknown-kind fallback finally scoped?</strong> Restrict to external, validate against the CRDs actually present, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.</li>
           <li><strong>Do we validate user-supplied providers, and how?</strong> A conformance suite is the obvious answer and nobody has scoped one.</li>
           <li><strong>How are failure modes surfaced?</strong> Logs only, or a path that explicitly signals the failing component is not Red Hat owned?</li>
-          <li><strong>Teardown before <code>metadata.json</code> exists.</strong> An <code>ignitionReady</code> hook creates cloud objects before the installer has written the metadata <code>destroy cluster</code> reads. A run that dies in between leaves an orphaned object and a live pre-signed request with no record of either. Hook writes its teardown state first, or the installer writes metadata earlier — undecided.</li>
+          <li><strong>Teardown before <code>metadata.json</code> exists.</strong> An <code>ignition</code> hook creates cloud objects before the installer has written the metadata <code>destroy cluster</code> reads. A run that dies in between leaves an orphaned object and a live pre-signed request with no record of either. Hook writes its teardown state first, or the installer writes metadata earlier — undecided.</li>
         </ul>
       </div>
       <div class="panel ext">
