@@ -495,6 +495,36 @@ spec:
       - --webhook-port={{.WebhookPort}}
       - --webhook-cert-dir={{.WebhookCertDir}}
 
+    # REQUIRED ENVIRONMENT, DECLARED BY THE PROVIDER.
+    #
+    # The controller inherits the installer's environment
+    # (pkg/clusterapi/internal/process/process.go:131). That already works and
+    # it is the problem: it works invisibly. A provider that needs a variable
+    # has no way to say so, the installer has no way to check, and a missing
+    # one surfaces as a start-up timeout naming nothing.
+    #
+    # Measured on the CAPOCI arm 2026-11-09: CAPOCI reads AUTH_CONFIG_DIR at
+    # setup and exits when it is unset. The pilot's runs had survived only
+    # because the variable happened to be exported in the operator's shell.
+    # The first run without it failed with "timeout waiting for process
+    # controller to start", fifteen minutes in, with the real message buried
+    # in the controller's own output.
+    #
+    # So the payload declares what it needs and the installer validates it
+    # BEFORE the local control plane starts and before any cloud resource
+    # exists -- the same place payloadImage resolution already fails, where
+    # being wrong is free. The user is told which variable is missing by the
+    # artifact itself rather than having to find documentation that may be
+    # stale.
+    #
+    # VALUES ARE NEVER DECLARED HERE, only names. A value in a payload is a
+    # value published to everyone who can pull the image, and these names are
+    # routinely credentials. What the cluster creator supplies must be a path
+    # or a reference, never the secret, because install-config.yaml is
+    # archived and appears in .openshift_install_state.json.
+    requiredEnv:
+      - AUTH_CONFIG_DIR
+
     # A single file, not a directory. Every clusterctl provider already
     # publishes exactly one infrastructure-components.yaml.
     #
@@ -2261,6 +2291,29 @@ elsewhere in this document:
 * **Approving node certificates is what made the install unattended**, and it also removed
   a second fault it had been hiding — see the Known gap under Support below.
 
+**The non-embedded arm, which is the one that matters, now runs the proposed form too.**
+CAPOCI was exercised as a payload image on 2026-11-10. The cloud infrastructure is
+provisioned, the control plane boots, three nodes reach `Ready` and the cloud controller
+manager runs. The cluster does not fully converge, and separating what that does and does
+not establish is the point:
+
+* **Every interface this proposal adds was exercised against a provider the installer
+  does not embed.** All four hook phases ran, including `ignition` — the phase the pilot
+  could not express as a hook at all, here staging a 451 KB bootstrap ignition into object
+  storage behind a pre-authenticated request and handing back a 254-byte pointer. Payload
+  resolution, extraction, rendering, controller start-up, the environment contract, the
+  failure-reason channel and `destroy cluster` through the provider all behaved as
+  specified.
+* **What blocks convergence is provider configuration, not the mechanism.** The cloud
+  controller manager's credential model on that arm is unresolved, and compute nodes
+  cannot join during bootstrap for a reason that belongs to OpenShift rather than to
+  Cluster API — see the Known gap under Support.
+* **Ten distinct root causes were found and fixed, and none was in the installer.** Each
+  was either a provider's own expectation the payload had not declared, or an environment
+  value the runner did not set. That distribution is itself the result worth reporting: it
+  is what "the installer knows nothing about the provider's cloud" looks like when it is
+  working.
+
 **Where the proposal departs.** The pilot answered "can the installer run a provider it
 does not embed?" and deliberately left every *delivery* question open. Those are what the
 proposal closes:
@@ -2587,6 +2640,50 @@ still add one — but it is positive evidence that the set can be frozen at four
 `v1beta1` rather than left open, and freezing it removes the most likely reason a
 breaking bump would be needed.
 
+### 15. How does a provider whose credential must live in the management cluster supply it?
+
+Answered for the common case and open for the rest.
+
+Most providers authenticate from their process environment, and question 14's
+`requiredEnv` closes that: the payload declares the names, the installer validates them
+before the local control plane starts, and a missing one is a validation error rather
+than a start-up timeout.
+
+Some providers authenticate from a **Kubernetes object in the management cluster**
+instead. CAPOCI supports both, and the OCI reference payload uses the second: an
+`OCIClusterIdentity` naming a Secret that holds an API signing key. That Secret cannot be
+in the payload — an image carrying one tenancy's key is not a provider payload — and
+there is nowhere for the provider to put it. Verified against
+`pkg/infrastructure/clusterapi/clusterapi.go`:
+
+| | line | local control plane exists? | infrastructure ready? |
+| --- | --- | --- | --- |
+| `PreProvision` | :178 | no — it starts at :212 | no |
+| — | :212–:225 | **yes, and no hook runs here** | no |
+| `InfraReady` | :312 | yes | yes, which is what the credential is blocking |
+
+So creation has no extension point and the operator applies the Secret by hand, mid
+install, inside the `infrastructureReady` timeout. **Teardown does not have the problem**:
+`preDestroy` runs after the control plane is up, so the OCI payload's hook restores the
+Secret itself and `destroy cluster` needs no manual step. That asymmetry — repairable on
+the way out, not on the way in — is the whole of the gap.
+
+Three shapes of answer, none chosen:
+
+* a phase between the local control plane starting and the first infrastructure object
+  being created, which is a fifth hook for one case we have met once;
+* a declarative list of objects the installer applies to the local control plane before
+  provisioning, sourced from paths the cluster creator supplies — closer to `requiredEnv`
+  in spirit, and it keeps the credential out of the payload;
+* nothing, and the contract states that a provider must be able to authenticate from its
+  environment. CAPOCI can, with `--init-oci-clients-on-startup` and `AUTH_CONFIG_DIR`, so
+  this is not hypothetical — it would make the OCI payload simpler, not harder.
+
+The third is the cheapest and narrows the contract; whether it narrows it past what some
+real provider needs is the question. **Not blocking Dev Preview** — the manual step works
+and is documented — but it is a contract decision, so it should not be settled by
+default.
+
 [ep-2138]: https://github.com/openshift/enhancements/pull/2138
 [ign-platforms]: https://github.com/coreos/ignition/blob/main/docs/supported-platforms.md
 [capi-benchmark]: https://htmlpreview.github.io/?https://raw.githubusercontent.com/mtulio/enhancements/refs/heads/platform-external-capi/enhancements/cloud-integration/install-external-platform-type-with-capi-benchmark.html
@@ -2846,7 +2943,31 @@ hitting this, not a provider defect; `oc get csr` will show pending requests.
 `cluster-machine-approver` is running and is not broken — it refuses because it resolves
 CSRs through the Machine API, which is empty here. See Open Question 12.
 
-**And the gap hides a second one, which is the part worth carrying into support.** On a
+**Day-0 compute cannot join while the bootstrap is the only machine config server, and
+that is by design.** A provider payload's worker `Machine` objects are created during
+provisioning, so the compute nodes boot while bootstrap is still serving 22623 — and the
+bootstrap machine config server **refuses the `worker` pool deliberately**:
+
+```
+Pool "worker" requested by address:"10.0.0.27"
+error: refusing to serve bootstrap configuration to pool "worker"
+```
+
+Workers therefore cannot configure until the real control-plane machine config server is
+serving and the bootstrap has left the load balancer's backend set — which happens after
+provisioning returns. A `postProvision` hook that waits for compute nodes to become
+`Ready` will therefore deadlock the install: it blocks before the thing it is waiting for
+can possibly happen. Measured on the CAPOCI arm 2026-11-10, where the load balancer's
+five-tuple hashing pinned one worker to the bootstrap backend for 400 consecutive
+attempts.
+
+This is not specific to one cloud and it is not caused by Cluster API. It is a
+consequence of day-0 machines existing at all on a platform with no machine-api actuator,
+and it compounds the CSR gap above: by the time a worker *can* be configured, the hook
+that would have approved its certificate has already returned. **Day-0 compute on this
+platform needs an in-cluster approver, not a hook.**
+
+**And the CSR gap hides a second one, which is the part worth carrying into support.** On a
 pilot cluster the ingress load balancer was created by the cloud controller manager with
 zero targets registered and stayed that way for fifty-two minutes, because the target set
 is recomputed when the node set changes and the node set never changed again after the
