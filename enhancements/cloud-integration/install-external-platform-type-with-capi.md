@@ -128,6 +128,24 @@ API provider carries the whole provisioning burden themselves.
 provider in-cluster for autoscaling and machine health checks. It explicitly
 does not cover install-time provisioning. This enhancement is the day-0 half.
 
+### Where this sits: `platform: external` already has two stages, and this adds a third
+
+Stating the baseline matters because the two existing stages are easy to conflate with
+each other and with what is being asked for here. Only the third is new; nothing in this
+enhancement changes the first two.
+
+| Stage | What it is | Infrastructure | Status |
+| --- | --- | --- | --- |
+| 1 | **`platform: external`, standard** — a fork of `platform: none`. No standardisation, no cloud provider integration. | created by hand | ships today |
+| 2 | **`platform: external` with `cloudControllerManager`** — the CCM is enabled, which is what unblocks CSI drivers and `Service` type `LoadBalancer`. Installed through UPI, Assisted Installer or the agent-based installer, all of them agnostic. | created by hand | ships today |
+| 3 | **`platform: external` with CAPI provisioning** — the installer provisions the infrastructure through a partner Cluster API provider, and `cloudControllerManager` is enabled by default. | created by the installer, through the partner's provider | **this enhancement** |
+
+The thing stage 3 removes is the hand-built infrastructure, not the agnostic install
+methods: stages 1 and 2 remain exactly as they are, and a partner who does not want the
+installer touching their cloud keeps using them. What stage 3 adds is a path where the
+provisioning burden the Motivation describes is carried by a provider the partner already
+maintains, rather than by a runbook the customer executes.
+
 ### User Stories
 
 * As a cloud provider partner with an existing Cluster API infrastructure provider,
