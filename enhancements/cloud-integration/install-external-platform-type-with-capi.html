@@ -517,7 +517,12 @@
     -webkit-mask-image: radial-gradient(ellipse 90% 70% at 30% 40%, #000 20%, transparent 78%);
   }
   .cover .inner { position: relative; gap: clamp(16px, 2.6vh, 30px); }
-  .cover h1 { max-width: 15ch; }
+  /* Only the letters. Every slide centres its content vertically, so any
+     change to the title's LAYOUT height moves the eyebrow out of line with
+     the other twenty -- which is what three attempts at the font-size clamp
+     kept doing. A transform scales what is painted and leaves the box it
+     occupies exactly as it was, so nothing else on the slide shifts. */
+  .cover h1 { max-width: 15ch; transform: scale(.78); transform-origin: left top; }
   .cover .lede { max-width: 52ch; }
   .title-rule {
     width: 64px;
@@ -542,7 +547,7 @@
     <b>Platform External · Day 0</b>
     <span class="section" id="section-label">Enhancement proposal</span>
   </div>
-  <div class="counter" id="counter">01 / 20</div>
+  <div class="counter" id="counter">01 / 21</div>
 </header>
 
 <main class="deck" id="deck">
@@ -591,6 +596,56 @@
 </section>
 
 <section class="slide" id="slide-3" aria-hidden="true">
+  <div class="inner">
+    <p class="eyebrow">Where this sits</p>
+    <h2 class="wide">Two stages exist today. This proposal adds the third.</h2>
+
+    <p class="lede" style="max-width:72ch">Everything that follows expands the third box. The first two already ship, and nothing here changes them.</p>
+
+    <figure>
+      <div class="fig-scroll wide">
+        <svg viewBox="0 0 1000 240" role="img" aria-label="Three stages of platform External, left to right, with arrows showing that each builds on the one before. Stage one, platform External standard: a fork of platform None. Infrastructure is created by hand, there is no standardisation and no cloud provider integration. Stage two, platform External with cloudControllerManager: the CCM is enabled, which unblocks CSI drivers and Service type LoadBalancer resources. The install method is UPI, Assisted Installer or agent-based installer, all of them agnostic, and infrastructure is still created by hand. Stage three, which this proposal adds: the installer provisions the infrastructure through a partner Cluster API provider, and cloudControllerManager is enabled by default. The first two boxes are drawn in the OpenShift hue as existing behaviour; the third is drawn in the partner hue as the proposal." style="font-family:var(--sans)">
+          <defs>
+            <marker id="bb1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/>
+            </marker>
+          </defs>
+
+          <rect x="8" y="40" width="300" height="150" rx="8" style="fill:var(--surface);stroke:var(--ocp);stroke-width:1.5"/>
+          <text x="26" y="68" style="font-size:13px;font-weight:600;fill:var(--fg)">1 &#183; platform: external</text>
+          <text x="26" y="86" style="font-size:9.5px;font-family:var(--mono);fill:var(--muted)">standard &#8212; a fork of platform: none</text>
+          <text x="26" y="112" style="font-size:11px;fill:var(--fg)">Infrastructure created by hand</text>
+          <text x="26" y="132" style="font-size:11px;fill:var(--fg)">No standardisation</text>
+          <text x="26" y="152" style="font-size:11px;fill:var(--fg)">No cloud provider integration</text>
+          <text x="26" y="176" style="font-size:9.5px;font-family:var(--mono);fill:var(--muted)">ships today</text>
+
+          <line x1="316" y1="115" x2="340" y2="115" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#bb1)"/>
+
+          <rect x="348" y="40" width="300" height="150" rx="8" style="fill:var(--surface);stroke:var(--ocp);stroke-width:1.5"/>
+          <text x="366" y="68" style="font-size:13px;font-weight:600;fill:var(--fg)">2 &#183; + cloudControllerManager</text>
+          <text x="366" y="86" style="font-size:9.5px;font-family:var(--mono);fill:var(--muted)">CCM enabled</text>
+          <text x="366" y="112" style="font-size:11px;fill:var(--fg)">Unblocks CSI and Service resources</text>
+          <text x="366" y="132" style="font-size:11px;fill:var(--fg)">UPI, Assisted or ABI &#8212; all agnostic</text>
+          <text x="366" y="152" style="font-size:11px;fill:var(--fg)">Infrastructure still created by hand</text>
+          <text x="366" y="176" style="font-size:9.5px;font-family:var(--mono);fill:var(--muted)">ships today</text>
+
+          <line x1="656" y1="115" x2="680" y2="115" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#bb1)"/>
+
+          <rect x="688" y="40" width="304" height="150" rx="8" style="fill:var(--ext-soft);stroke:var(--ext);stroke-width:2"/>
+          <text x="706" y="68" style="font-size:13px;font-weight:600;fill:var(--fg)">3 &#183; + CAPI provisioning</text>
+          <text x="706" y="86" style="font-size:9.5px;font-family:var(--mono);fill:var(--muted)">this proposal</text>
+          <text x="706" y="112" style="font-size:11px;fill:var(--fg)">Installer provisions the infrastructure</text>
+          <text x="706" y="132" style="font-size:11px;fill:var(--fg)">through a partner Cluster API provider</text>
+          <text x="706" y="152" style="font-size:11px;fill:var(--fg)">CCM enabled by default</text>
+          <text x="706" y="176" style="font-size:9.5px;font-family:var(--mono);fill:var(--ext)">proposed</text>
+        </svg>
+      </div>
+      <figcaption>The three stages of <code>platform: external</code>. Each builds on the one before; only the third is being asked for.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="slide" id="slide-4" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The shape</p>
     <h2 class="wide">Three parties, one boundary</h2>
@@ -676,7 +731,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-4" aria-hidden="true">
+<section class="slide" id="slide-5" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow ext">The decision that matters</p>
     <h2 class="wide">Local paths proved it. The image is the proposal.</h2>
@@ -711,7 +766,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-5" aria-hidden="true">
+<section class="slide" id="slide-6" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow ext">The decision that matters</p>
     <h2 class="wide">How the pilot turned into the image</h2>
@@ -763,7 +818,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-6" aria-hidden="true">
+<section class="slide" id="slide-7" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The contract</p>
     <h2>The whole partner contract is one stanza</h2>
@@ -800,7 +855,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-7" aria-hidden="true">
+<section class="slide" id="slide-8" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The contract</p>
     <h2 class="wide">The payload layout is clusterctl's, not a new one</h2>
@@ -833,7 +888,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-8" aria-hidden="true">
+<section class="slide" id="slide-9" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The contract</p>
     <h2 class="wide">Pulling the payload adds no vendored dependency</h2>
@@ -866,7 +921,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-9" aria-hidden="true">
+<section class="slide" id="slide-10" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow ext">The contract</p>
     <h2>Four hooks, because the installer holds no credentials</h2>
@@ -903,7 +958,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-10" aria-hidden="true">
+<section class="slide" id="slide-11" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The flow</p>
     <h2 class="wide">Where each party acts during an install</h2>
@@ -946,7 +1001,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-11" aria-hidden="true">
+<section class="slide" id="slide-12" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">The flow</p>
     <h2>Day 0 manifests are how the cluster gets its cloud</h2>
@@ -976,7 +1031,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-12" aria-hidden="true">
+<section class="slide" id="slide-13" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Teardown</p>
     <h2>Destroy through the provider that created it</h2>
@@ -999,7 +1054,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-13" aria-hidden="true">
+<section class="slide" id="slide-14" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Evidence</p>
     <h2 class="wide">The AWS arm cannot prove the central claim</h2>
@@ -1023,11 +1078,13 @@
       </div>
     </div>
 
-    <p class="callout ocp"><strong>Evidence to date.</strong> Payload-image mode installed an AWS/CAPA cluster end to end — <code>Install complete!</code> in 38m20s, every cluster operator <code>Available=True</code>, no <code>level=error</code>. One create cycle on one provider: evidence that the mode works, not that it is finished.</p>
+    <p class="callout ocp"><strong>Evidence to date.</strong> Payload-image mode installs an AWS/CAPA cluster end to end, <strong>unattended</strong> — <code>create cluster</code> returns 0 with no <code>level=error</code>, five nodes <code>Ready</code>, zero pending CSRs, 34 of 34 cluster operators <code>Available</code> and none <code>Degraded</code>; <code>destroy cluster</code> then leaves no instance, load balancer, VPC, hosted zone or DNS record behind. Create and destroy cycles on one provider: evidence that the mode works, not that it is finished.</p>
+
+    <p class="callout"><strong>Two measurements a reviewer should carry into the test plan.</strong> The wait for the cloud controller manager's namespace took <strong>4m10s on one run and 14m36s on the next</strong> — same payload, same region, consecutive days. And <code>postProvision</code> is invoked about five minutes into the install, immediately after the machines are created, so almost everything it waits for is still in the future; the whole hook ran 28m29s, nearly all of it waiting. <strong>A timeout chosen from a single observation will be wrong</strong>, and a hook phase is a point in a sequence rather than a promise the sequence has caught up.</p>
   </div>
 </section>
 
-<section class="slide" id="slide-14" aria-hidden="true">
+<section class="slide" id="slide-15" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Evidence</p>
     <h2 class="wide">Sixteen providers say the hooks generalise. The boot image is the limit.</h2>
@@ -1083,7 +1140,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-15" aria-hidden="true">
+<section class="slide" id="slide-16" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Review</p>
     <h2>Three changes touch code integrated platforms run</h2>
@@ -1109,7 +1166,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-16" aria-hidden="true">
+<section class="slide" id="slide-17" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Risks</p>
     <h2>Six risks worth naming out loud</h2>
@@ -1149,7 +1206,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-17" aria-hidden="true">
+<section class="slide" id="slide-18" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Open questions</p>
     <h2>What is genuinely undecided</h2>
@@ -1161,7 +1218,7 @@
         <ul class="plain">
           <li><strong>How is the unknown-kind fallback finally scoped?</strong> Restrict to external, validate against the CRDs actually present, or register partner CRDs into the scheme at runtime. The pilot does the first; the choice is not made.</li>
           <li><strong>Do we validate user-supplied providers, and how?</strong> A conformance suite is the obvious answer and nobody has scoped one.</li>
-          <li><strong>How are failure modes surfaced?</strong> Logs only, or a path that explicitly signals the failing component is not Red Hat owned?</li>
+          <li><strong>How are failure modes surfaced?</strong> <em>Partly answered.</em> Banners bracket every hook, and a failing hook writes one line the installer quotes in its error. What remains open is a <strong>machine-readable</strong> signal — phase, owner, exit code, reason — so CI and automated triage do not have to parse prose.</li>
           <li><strong>Teardown before <code>metadata.json</code> exists.</strong> An <code>ignition</code> hook creates cloud objects before the installer has written the metadata <code>destroy cluster</code> reads. A run that dies in between leaves an orphaned object and a live pre-signed request with no record of either. Hook writes its teardown state first, or the installer writes metadata earlier — undecided.</li>
         </ul>
       </div>
@@ -1180,7 +1237,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-18" aria-hidden="true">
+<section class="slide" id="slide-19" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Graduation</p>
     <h2 class="wide">Dev Preview → Tech Preview → GA</h2>
@@ -1220,7 +1277,7 @@
   </div>
 </section>
 
-<section class="slide" id="slide-19" aria-hidden="true">
+<section class="slide" id="slide-20" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Support</p>
     <h2>An install fails in one of four places, in order</h2>
@@ -1244,16 +1301,18 @@
       </div>
       <div class="panel ext">
         <h3>4 · A hook</h3>
-        <p class="small body">Non-zero exit fails the install with the hook's exit code and its last output lines.</p>
+        <p class="small body">Non-zero exit fails the install. The error names the phase, the program, the exit code and the absolute path to that phase's log — plus one line the hook chose to write. The installer never quotes a hook's output: the <code>ignition</code> phase's natural output is a pre-signed URL over the whole bootstrap ignition.</p>
         <p class="small"><span class="pill ext">Partner</span></p>
       </div>
     </div>
 
-    <p class="callout ocp"><strong>Logged by path, source and SHA-256 — never by content.</strong> That rule is what makes attribution possible without turning the install log into a place secrets leak. <code>metadata.json</code> records the external platform and the provider name, so "was this path used?" is answerable in one look.</p>
+    <p class="callout ocp"><strong>Logged by path, source and SHA-256 — never by content.</strong> That rule is what makes attribution possible without turning the install log into a place secrets leak. <code>metadata.json</code> records the external platform and the provider name, so "was this path used?" is answerable in one look. Every hook invocation is bracketed by <code>=== STARTING PROVIDER HOOK (phase) ===</code> and a matching <code>FINISHING</code>, emitted on the failure path too, so a reader can see which side of the line they are on without knowing what a hook is.</p>
+
+    <p class="callout"><strong>A fifth symptom belongs here, and it is two faults wearing one face.</strong> Workers never join, <code>*.apps</code> resolves and then times out. Nothing in an External cluster approves a kubelet's certificate — <code>cluster-machine-approver</code> is running and healthy and refuses, because it resolves a CSR through the Machine API and this platform has none. Separately, the cloud controller manager creates the ingress load balancer with no targets and only recomputes them when the node set changes. Measured: fifty-two minutes with an empty target group. <strong>Fixing the CSR gap masks the load balancer one rather than curing it</strong> — check for both.</p>
   </div>
 </section>
 
-<section class="slide" id="slide-20" aria-hidden="true">
+<section class="slide" id="slide-21" aria-hidden="true">
   <div class="inner">
     <p class="eyebrow">Summary</p>
     <h2>Red Hat ships the seam, not the provider</h2>
