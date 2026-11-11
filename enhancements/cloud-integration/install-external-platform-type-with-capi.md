@@ -303,7 +303,7 @@ sequenceDiagram
     Install->>Hook: run ignition, handing it the bootstrap ignition
     Note over Install,Hook: the IgnitionProvider point of extension:<br/>network and load balancers exist, no machine does
     Hook->>Cloud: upload it, mint a pre-signed request over the object
-    Hook-->>Install: exits; the pointer config is at the declared bootstrapOutputPath
+    Hook-->>Install: exits, leaving the pointer config at the declared bootstrapOutputPath
     Install->>Install: read that file in place of its own bootstrap.ign
   end
 
